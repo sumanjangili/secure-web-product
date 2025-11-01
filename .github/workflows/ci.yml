@@ -24,3 +24,8 @@ jobs:
 
     - name: Run tests
       run: npm test
+
+    - name: Use secret
+      run: echo "The secret is $MY_SECRET"
+      env:
+        MY_SECRET: ${{ secrets.API_KEY }}
