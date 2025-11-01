@@ -1,0 +1,8 @@
+# Everyone must review all files
+*        @sumanjangili
+/docs/  @docs-team
+*.js    @frontend-team
+# Only backend team reviews API code
+/api/    @backend-team
+# A specific user reviews config files
+config/* @sumanjangili
