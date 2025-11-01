@@ -1,4 +1,4 @@
-name: CI
+name: CI / CD
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,7 +17,7 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
 
     - name: Install dependencies
       run: npm ci
@@ -25,7 +25,34 @@ jobs:
     - name: Run tests
       run: npm test
 
+    - name: ESLint
+      run: npm run lint
+
+    # Example: npm audit instead of dependabot actions
+    - name: Audit dependencies
+      run: npm audit --audit-level=high
+
+    # Trivy scan - ensure you have a Docker image built before this step
+    # - name: Trivy scan (if Docker)
+    #  uses: aquasecurity/trivy-action@master
+    #  with:
+    #   image-ref: myapp:latest
+    #  exit-code: '1'
+
     - name: Use secret
       run: echo "The secret is $MY_SECRET"
       env:
         MY_SECRET: ${{ secrets.API_KEY }}
+
+  deploy:
+    needs: build-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to server
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          ./deploy.sh
