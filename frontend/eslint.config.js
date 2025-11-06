@@ -1,112 +1,154 @@
-// frontend/eslint.config.js
-import js from '@eslint/js';
+// eslint.config.js
+import eslint from '@eslint/js';
 import reactPlugin from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
-import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from '@typescript-eslint/eslint-plugin';
-import parser from '@typescript-eslint/parser';
+import tsparser from '@typescript-eslint/parser';
 
-/* ---------- GLOBAL DEFINITIONS ---------- */
-// Browser globals (read‑only)
-const browserGlobals = {
-  alert: true,
-  console: true,
-  document: true,
-  window: true,
-  btoa: true,
-  atob: true,
-};
-
-// Vitest/Jest globals for test files
-const vitestGlobals = {
-  test: true,
-  it: true,
-  describe: true,
-  expect: true,
-  beforeAll: true,
-  afterAll: true,
-  beforeEach: true,
-  afterEach: true,
-};
-
+/**
+ * Flat‑config export – an array of configuration objects.
+ */
 export default [
-  /* -------------------------------------------------
-   * Base config – applies ONLY to source files that
-   *    belong to the TypeScript project (src/** and vite.config.ts)
-   * ------------------------------------------------- */
+  /* ------------------------------------------------------------------
+   * Global ignores – applied to every subsequent config block
+   * ------------------------------------------------------------------ */
   {
-    // NOTE: we *exclude* the config file itself by restricting the pattern
-    files: ['src/**/*.{js,ts,tsx}', 'vite.config.ts'],
+    ignores: ['dist/**'],
+  },
+
+  /* ------------------------------------------------------------------
+   * Global globals for every file
+   * ------------------------------------------------------------------ */
+  {
     languageOptions: {
-      parser,
+      globals: {
+        // Browser globals
+        window: 'readonly',
+        document: 'readonly',
+        localStorage: 'readonly',
+        sessionStorage: 'readonly',
+        crypto: 'readonly',
+        btoa: 'readonly',
+        atob: 'readonly',
+        fetch: 'readonly',
+        performance: 'readonly',
+        navigator: 'readonly',
+        // Console is needed for the `no‑undef` errors you saw
+        console: 'readonly',
+
+        // Misc globals
+        MessageChannel: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setImmediate: 'readonly',
+        queueMicrotask: 'readonly',
+
+        // Node globals (useful for config files, scripts, etc.)
+        process: 'readonly',
+        __dirname: 'readonly',
+      },
+    },
+  },
+
+  /* ------------------------------------------------------------------
+   * Recommended core ESLint rules
+   * ------------------------------------------------------------------ */
+  eslint.configs.recommended,
+
+  /* ------------------------------------------------------------------
+   * TypeScript / React project files
+   * ------------------------------------------------------------------ */
+  {
+    // Files this config applies to
+    files: [
+      'src/**/*.ts',
+      'src/**/*.tsx',
+      'src/**/*.test.{ts,tsx}',
+      'src/**/*.{js,jsx}', // include plain JS if you ever need it
+    ],
+
+    languageOptions: {
+      parser: tsparser,
       parserOptions: {
-        project: ['./tsconfig.json'],          // points to the tsconfig that includes src/**
-        tsconfigRootDir: import.meta.dirname,
-        ecmaVersion: 2022,
+        ecmaVersion: 'latest',
         sourceType: 'module',
         ecmaFeatures: { jsx: true },
+        // Use a dedicated tsconfig that excludes vite.config.ts
+        project: './tsconfig.eslint.json',
       },
-      globals: browserGlobals,                  // make browser globals known
+
+      // Global variables 
+      globals: {
+        // Vitest/Jest globals (if you use Vitest)
+        test: 'readonly',
+        expect: 'readonly',
+        describe: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        vi: 'readonly',
+      },
     },
+
     plugins: {
       '@typescript-eslint': tseslint,
       react: reactPlugin,
       'react-hooks': reactHooks,
-      'react-refresh': reactRefresh,
+      // Uncomment if you install react-refresh
+      // 'react-refresh': reactRefresh,
     },
-    settings: {
-      react: { version: 'detect' },
-    },
+
     rules: {
-      // ----- TypeScript rules -----
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      /* ---------- TypeScript‑ESLint rules ---------- */
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_' },
+      ],
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
 
-      // ----- React rules -----
-      'react/react-in-jsx-scope': 'off', // new JSX transform
-      'react/prop-types': 'off',        // we rely on TS for props
+      /* ---------- React rules ---------- */
+      'react/react-in-jsx-scope': 'off', // not needed with React 17+
+      'react/prop-types': 'off', // using TypeScript for props
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
 
-      // ----- Fast Refresh (Vite dev) -----
-      'react-refresh/only-export-components': 'warn',
+      /* ---------- Miscellaneous ---------- */
+      'no-console': 'off', // allow console.log in dev code (change to warn/error if desired)
+      'no-undef': 'error',
+    },
+
+    settings: {
+      react: { version: 'detect' },
     },
   },
 
-  /* -------------------------------------------------
-   * Test‑file config – adds Vitest globals for
-   *    any file under __tests__ or ending with .test.*
-   * ------------------------------------------------- */
+  /* ------------------------------------------------------------------
+   * Plain‑JS / Vite config files (no type‑information)
+   * ------------------------------------------------------------------ */
   {
-    files: [
-      '**/__tests__/**/*.ts',
-      '**/__tests__/**/*.tsx',
-      '**/*.test.{js,jsx,ts,tsx}',
-    ],
+    files: ['*.js', '*.cjs', '*.mjs', 'vite.config.ts'],
+
     languageOptions: {
-      // Inherit parser/options from the base config, just extend globals
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+
       globals: {
-        ...browserGlobals, // keep browser globals available in tests
-        ...vitestGlobals, // add Vitest/Jest globals
+        // Node globals for config files
+        process: 'readonly',
+        __dirname: 'readonly',
       },
     },
-    // No extra plugins/rules needed – they are inherited from the first block
-  },
 
-  /* -------------------------------------------------
-   * Fallback – catch‑all for any other files (e.g. this config itself)
-   *    We deliberately *don’t* set a parser here, so ESLint will treat them
-   *    as plain JavaScript and won’t try to apply the TypeScript project.
-   * ------------------------------------------------- */
-  {
-    files: ['**/*.js', '**/*.cjs', '**/*.mjs'],
-    // No languageOptions – defaults to the built‑in ESLint parser (no TS project)
-    // This block can stay empty; it simply prevents the parser error.
-  },
+    plugins: {
+      react: reactPlugin,
+    },
 
-  /* -------------------------------------------------
-   * Core ESLint recommended rules (optional but useful)
-   * ------------------------------------------------- */
-  js.configs.recommended,
+    rules: {
+      // Turn off TypeScript‑only rules for plain JS files
+      '@typescript-eslint/no-var-requires': 'off',
+      '@typescript-eslint/no-empty-function': 'off',
+    },
+  },
 ];

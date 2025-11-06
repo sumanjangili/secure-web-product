@@ -1,63 +1,65 @@
-name: CI / CD
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main, develop]
   pull_request:
-    branches: [ "main" ]
-    
-permissions:
-  contents: read
-  pull-requests: write
-  issues: none
-  
+    branches: [main, develop]
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      # ---------- Checkout ----------
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
+      # ---------- Node setup ----------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
 
-    - name: Install dependencies
-      run: npm ci
+      # ---------- Install deps ----------
+      - name: Install dependencies
+        run: npm ci
 
-    - name: Run tests
-      run: npm test
+      # ---------- Lint ----------
+      - name: Run ESLint
+        run: npx eslint . --ext .ts,.tsx
 
-    - name: ESLint
-      run: npm run lint
+      # ---------- Type checking ----------
+      - name: Run TypeScript compiler
+        run: npx tsc --noEmit
 
-    # Example: npm audit instead of dependabot actions
-    - name: Audit dependencies
-      run: npm audit --audit-level=high
+      # ---------- Unit tests ----------
+      - name: Run Vitest
+        run: npx vitest run --coverage
 
-    # Trivy scan - ensure you have a Docker image built before this step
-    # - name: Trivy scan (if Docker)
-    #  uses: aquasecurity/trivy-action@master
-    #  with:
-    #   image-ref: myapp:latest
-    #  exit-code: '1'
+      # ---------- Build ----------
+      - name: Build production bundle
+        run: npm run build
 
-    - name: Use secret
-      run: echo "The secret is $MY_SECRET"
-      env:
-        MY_SECRET: ${{ secrets.API_KEY }}
-
-  deploy:
-    needs: build-test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy to server
+      # ---------- Optional: Deploy preview ----------
+      - name: Deploy to Netlify (preview)
+        if: github.event_name == 'pull_request'
+        uses: nwtgck/actions-netlify@v2
+        with:
+          publish-dir: ./frontend/dist
+          production-deploy: false
         env:
-          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          ./deploy.sh
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+
+      # ---------- Security scan (CodeQL) ----------
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: javascript
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2

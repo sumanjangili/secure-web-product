@@ -30,10 +30,10 @@ Secure Web Products is a **privacy‑first** demo application built to showc
 
 | Goal | Why it matters |
 |------|----------------|
-| **Privacy‑first UX** | All data is encrypted client‑side; no telemetry is collected. |
-| **Transparent architecture** | Frontend communicates only with a Netlify serverless function that writes to an immutable log (e.g., Cloudflare KV or AWS S3). |
-| **CI security hardening** | Every commit runs static analysis, dependency scanning, and a custom security script (`npm run security`). |
-| **Open collaboration** | Clear contribution guidelines and a welcoming community space. |
+| Privacy‑first UX | All data is encrypted client‑side; no telemetry is collected. |
+| Transparent architecture | Frontend communicates only with a Netlify serverless function that writes to an immutable log (e.g., Cloudflare KV or AWS S3). |
+| CI security hardening | Every commit runs static analysis, dependency scanning, and a custom security script (`npm run security`). |
+| Open collaboration | Clear contribution guidelines and a welcoming community space. |
 
 The repo is deliberately minimal so newcomers can focus on the core concepts without being distracted by unrelated tooling.
 
@@ -42,12 +42,14 @@ The repo is deliberately minimal so newcomers can focus on the core concepts wit
 ## Quick Start
 
 ### Prerequisites
-- **Node.js** ≥ 18 (LTS)
-- **npm** (comes with Node) or **yarn**
+- Node.js ≥ 18 (LTS)
+- npm (comes with Node) or yarn
 - A Netlify account (free tier works fine)
 
-### 1️⃣ Install dependencies
-```bash
-git clone https://github.com/your-org/secure-web-products.git
-cd secure-web-products
-npm ci          # installs exact versions from package-lock.json
+# Clone & install
+git clone <repo‑url>
+cd secure-web-product/frontend
+npm ci
+
+# Development server
+npm run dev
