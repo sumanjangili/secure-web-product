@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "clean": "bash ./scripts/clean.sh",
+    "gen-docs": "ts-node ./scripts/generate-docs.ts",
+    "encrypt-demo": "ts-node ./scripts/encrypt-demo.ts",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -22,6 +24,7 @@
     "@testing-library/jest-dom": "^6.4.0",
     "@testing-library/react": "^14.3.1",
     "@testing-library/user-event": "^14.5.0",
+    "@types/node": "^24.10.0",
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
     "@vitejs/plugin-react": "^4.7.0",
@@ -34,7 +37,8 @@
     "jsdom": "^27.1.0",
     "prettier": "^3.6.2",
     "rimraf": "^4.4.1",
-    "typescript": "^5.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
     "vite": "^7.2.0",
     "vitest": "^4.0.7"
   }

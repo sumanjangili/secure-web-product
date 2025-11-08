@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: none
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
@@ -29,10 +34,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+ HEAD
       # ---------- Debug ----------
       - name: List installed packages
         run: npm ls --depth=0
         
+
+      #---------- Debug ----------
+      - name: List installed packages
+        run: npm ls --depth=0      
+
+ ed4fba9 (added:generate-docs.ts will always produce an up‑to‑date docs/COMBINED.md, encrypt-demo.ts will print a self‑contained demonstration of secure encryption and VERIFY_CHECKLIST.md -tick the “Docs up‑to‑date” item)
       # ---------- Lint ----------
       - name: Run ESLint
         run: npx eslint . --ext .ts,.tsx
@@ -47,7 +59,7 @@ jobs:
 
       # ---------- Build ----------
       - name: Build production bundle
-        run: npm run build
+        run: npm run build --verbose
 
       # ---------- Optional: Deploy preview ----------
       - name: Deploy to Netlify (preview)
