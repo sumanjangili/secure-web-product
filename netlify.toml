@@ -1,6 +1,8 @@
- [build]
+ # netlify.toml at the repo root
+[build]
   base = "frontend"
-
-  # Now these paths are relative to the new base
   command = "npm run build"
-  publish = "dist"          # because we’re already inside `frontend`
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
