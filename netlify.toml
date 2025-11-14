@@ -1,6 +1,6 @@
-[build]
-  base = "."
-  publish = "./frontend/dist"
+ [build]
+  base = "frontend"
+
+  # Now these paths are relative to the new base
   command = "npm run build"
-   # Path to the folder that contains serverless functions
-  functions = "./netlify/functions"
+  publish = "dist"          # because we’re already inside `frontend`
