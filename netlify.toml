@@ -1,0 +1,6 @@
+[build]
+  base = "."
+  publish = "./frontend/dist"
+  command = "npm run build"
+   # Path to the folder that contains serverless functions
+  functions = "./netlify/functions"
