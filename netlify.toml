@@ -1,7 +1,7 @@
- # netlify.toml at the repo root
+# netlify.toml at the repo root
 [build]
   base = "frontend"
-  command = "npm run build"
+  command = "npm run build --verbose"
   publish = "dist"
 
 [functions]

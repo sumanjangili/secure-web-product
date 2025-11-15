@@ -22,6 +22,12 @@ Thumbs.db
 # Test coverage reports
 coverage/
 
+# Allow audit_log.js even though other JS files are ignored
+!netlify/functions/audit_log.js
+
 # Netlify function bundles
 netlify/functions/*.js
 netlify/functions/*.zip
+
+# Local Netlify folder
+.netlify
