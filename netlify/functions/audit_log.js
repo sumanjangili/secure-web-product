@@ -1,8 +1,8 @@
 /**
  * Netlify Function: audit_log
  *
- * Receives a JSON payload describing a user event and writes it to a simple
- * log file (or forwards it to a real logging service).
+ * Receives a JSON payload describing a user event and writes it to a
+ * temporary log file (or forwards it to a real logging service).
  *
  * Expected body (example):
  * {
@@ -15,24 +15,18 @@
 
 const fs   = require('fs');
 const path = require('path');
-
-/**
- * In production you would replace this with a DB or external log service.
- * For a quick demo we just append to a file inside the function bundle.
- */
-const LOG_FILE = path.join(__dirname, 'audit.log');
+const os   = require('os');
 
 /**
  * Netlify injects environment variables into `process.env` at runtime.
- * The secret must be defined in the Netlify UI (Site Settings → Build & Deploy →
+ * Define the secret in the Netlify UI (Site Settings → Build & Deploy →
  * Environment → Environment variables) as `AUDIT_SECRET`.
  */
 exports.handler = async (event, _context) => {
-  // -------------------------------------------------------------------------
-  // 1️⃣  Secret validation
-  // -------------------------------------------------------------------------
-  const expectedSecret = process.env.AUDIT_SECRET;               // <- set in Netlify UI
-  // Netlify normalises header names to lower‑case, but we accept both just in case
+  // --------------------------------------------------------------
+  // 1️⃣ Secret validation
+  // --------------------------------------------------------------
+  const expectedSecret = process.env.AUDIT_SECRET;
   const providedSecret = event.headers['x-audit-secret'] ||
                          event.headers['X-Audit-Secret'];
 
@@ -51,9 +45,9 @@ exports.handler = async (event, _context) => {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // 2️⃣  Payload parsing & logging
-  // -------------------------------------------------------------------------
+  // --------------------------------------------------------------
+  // 2️⃣ Payload parsing
+  // --------------------------------------------------------------
   let payload;
   try {
     payload = JSON.parse(event.body);
@@ -65,10 +59,21 @@ exports.handler = async (event, _context) => {
     };
   }
 
-  // Append a line to the log file: ISO‑timestamp + JSON payload
+  // --------------------------------------------------------------
+  // 3️⃣ Write to a **writable** location
+  // --------------------------------------------------------------
+  // Netlify guarantees that the directory returned by os.tmpdir()
+  // (or the $TMPDIR env var) is writable for the lifetime of the
+  // function invocation. We'll create a file called `audit.log`
+  // inside that temp directory.
+  const tmpDir   = os.tmpdir();                // e.g. /tmp
+  const LOG_FILE = path.join(tmpDir, 'audit.log');
+
   const line = `${new Date().toISOString()} ${JSON.stringify(payload)}\n`;
+
   try {
-    fs.appendFileSync(LOG_FILE, line, 'utf8');
+    // Use the async API – Netlify will wait for the promise to settle.
+    await fs.promises.appendFile(LOG_FILE, line, 'utf8');
   } catch (e) {
     console.error('Unable to write audit log file:', e);
     return {
@@ -77,11 +82,17 @@ exports.handler = async (event, _context) => {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // 3️⃣  Success response
-  // -------------------------------------------------------------------------
+  // --------------------------------------------------------------
+  // 4️⃣ Success response
+  // --------------------------------------------------------------
   return {
     statusCode: 200,
-    body: JSON.stringify({ ok: true, message: 'Audit logged' })
+    body: JSON.stringify({
+      ok: true,
+      message: 'Audit logged',
+      // optional: echo the temporary file location for debugging
+      // (remove in production!)
+      // logPath: LOG_FILE
+    })
   };
 };
