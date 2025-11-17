@@ -1,8 +1,19 @@
-# netlify.toml at the repo root
 [build]
- #  base = "frontend"
-  command = "npm run build --verbose"
-  publish = "frontend/dist"
+  # Netlify will cd into this folder before executing the command
+  base    = "frontend"
 
-[functions]
-  directory = "netlify/functions"
+  # Run the build script defined in frontend/package.json
+  command = "npm run build --verbose"
+
+  # The folder that contains the compiled assets (relative to `base`)
+  publish = "dist"
+
+  # Where Netlify should look for serverless functions
+  # Path is resolved relative to the `base` folder
+  functions = "../netlify/functions"
+
+# Optional: expose environment variables to the build (already present in your logs)
+[build.environment]
+  AUDIT_SECRET            = "$AUDIT_SECRET"
+  VITE_API_URL           = "$VITE_API_URL"
+  VITE_AUDIT_LOG_ENDPOINT = "$VITE_AUDIT_LOG_ENDPOINT"
