@@ -92,7 +92,7 @@ exports.handler = async (event, _context) => {
       message: 'Audit logged',
       // optional: echo the temporary file location for debugging
       // (remove in production!)
-      // logPath: LOG_FILE
+      logPath: LOG_FILE
     })
   };
 };
