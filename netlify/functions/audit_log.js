@@ -1,98 +1,48 @@
-/**
- * Netlify Function: audit_log
- *
- * Receives a JSON payload describing a user event and writes it to a
- * temporary log file (or forwards it to a real logging service).
- *
- * Expected body (example):
- * {
- *   "event": "consent_given",
- *   "userId": "abc123",
- *   "timestamp": "2025-11-05T12:34:56Z",
- *   "details": { ... }
- * }
- */
+// netlify/functions/audit_log.js
 
-const fs   = require('fs');
-const path = require('path');
-const os   = require('os');
+// Netlify injects env vars prefixed with `NETLIFY_` automatically.
+// You can also define a custom variable in Site Settings → Build & deploy → Environment.
+const EXPECTED_SECRET = process.env.AUDIT_SECRET;   // e.g. set to "supsecret"
 
-/**
- * Netlify injects environment variables into `process.env` at runtime.
- * Define the secret in the Netlify UI (Site Settings → Build & Deploy →
- * Environment → Environment variables) as `AUDIT_SECRET`.
- */
-exports.handler = async (event, _context) => {
-  // --------------------------------------------------------------
-  // 1️⃣ Secret validation
-  // --------------------------------------------------------------
-  const expectedSecret = process.env.AUDIT_SECRET;
-  const providedSecret = event.headers['x-audit-secret'] ||
-                         event.headers['X-Audit-Secret'];
-
-  if (!expectedSecret) {
-    console.error('AUDIT_SECRET is not defined in the Netlify environment.');
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Server misconfiguration' })
-    };
+exports.handler = async (event, context) => {
+  // -------------------------------------------------
+  // Enforce POST
+  // -------------------------------------------------
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  if (providedSecret !== expectedSecret) {
-    return {
-      statusCode: 401,
-      body: JSON.stringify({ error: 'Invalid secret' })
-    };
+  // -------------------------------------------------
+  // Validate the secret header
+  // -------------------------------------------------
+  const providedSecret = event.headers['x-audit-secret'] || event.headers['X-Audit-Secret'];
+  if (!providedSecret || providedSecret !== EXPECTED_SECRET) {
+    // Do NOT reveal which part failed – just a generic unauthorized response
+    return { statusCode: 401, body: 'Unauthorized' };
   }
 
-  // --------------------------------------------------------------
-  // 2️⃣ Payload parsing
-  // --------------------------------------------------------------
+  // -------------------------------------------------
+  // Parse JSON payload safely
+  // -------------------------------------------------
   let payload;
   try {
     payload = JSON.parse(event.body);
   } catch (e) {
-    console.error('Failed to parse JSON payload:', e);
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: 'Invalid JSON body' })
-    };
+    return { statusCode: 400, body: 'Invalid JSON' };
   }
 
-  // --------------------------------------------------------------
-  // 3️⃣ Write to a **writable** location
-  // --------------------------------------------------------------
-  // Netlify guarantees that the directory returned by os.tmpdir()
-  // (or the $TMPDIR env var) is writable for the lifetime of the
-  // function invocation. We'll create a file called `audit.log`
-  // inside that temp directory.
-  const tmpDir   = os.tmpdir();                // e.g. /tmp
-  const LOG_FILE = path.join(tmpDir, 'audit.log');
+  // -------------------------------------------------
+  // Your audit‑logging logic (e.g. write to a DB, Cloudflare KV, etc.)
+  // -------------------------------------------------
+  console.log('✅ Authenticated audit event:', payload);
+  // …insert whatever persistence you need here…
 
-  const line = `${new Date().toISOString()} ${JSON.stringify(payload)}\n`;
-
-  try {
-    // Use the async API – Netlify will wait for the promise to settle.
-    await fs.promises.appendFile(LOG_FILE, line, 'utf8');
-  } catch (e) {
-    console.error('Unable to write audit log file:', e);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Could not write log' })
-    };
-  }
-
-  // --------------------------------------------------------------
-  // 4️⃣ Success response
-  // --------------------------------------------------------------
+  // -------------------------------------------------
+  // Success response
+  // -------------------------------------------------
   return {
     statusCode: 200,
-    body: JSON.stringify({
-      ok: true,
-      message: 'Audit logged',
-      // optional: echo the temporary file location for debugging
-      // (remove in production!)
-      logPath: LOG_FILE
-    })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ received: true })
   };
 };
