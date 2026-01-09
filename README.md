@@ -53,3 +53,5 @@ npm ci
 
 # Development server
 npm run dev
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)
