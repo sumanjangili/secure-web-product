@@ -55,14 +55,5 @@ npm ci
 npm run dev
 
 # Support this project
-<details>
-  <summary>💖 Click here to see the Sponsor button</summary>
-
- ![Sponsor button screenshot](assets/sponsor-button.png)
-
-  **Note:** Anyone with read access to this private repository will see the **Sponsor** button
-  on the right‑hand side of the repo page. Just click it to view the sponsorship options.
-</details>
-
 [![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)
