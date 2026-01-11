@@ -1,4 +1,4 @@
-# Secure Web Products – Privacy‑First Demo
+# Secure Web Products – Privacy‑First Audit Logging Demo
 
 A sample project that demonstrates a basic CI pipeline with GitHub Actions.The workflow runs linting, static analysis, security scans, and unit tests
 on every push to the `main` branch. 
@@ -54,5 +54,14 @@ npm ci
 # Development server
 npm run dev
 
-[![Sponsor](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)
+# Support this project
+<details>
+  <summary>💖 Click here to see the Sponsor button</summary>
+
+  ![Sponsor button screenshot](https://raw.githubusercontent.com/sumanjangili/secure-web-product/main/assets/sponsor-button.png)
+
+  **Note:** Anyone with read access to this private repository will see the **Sponsor** button
+  on the right‑hand side of the repo page. Just click it to view the sponsorship options.
+</details>
+[![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)
