@@ -64,8 +64,8 @@ cd secure-web-product
 # Install front‑end dependencies
 npm ci   # or `pnpm install` / `yarn install`
 
-### Generate a Sodium key pair (for local testing)
 
+Generate a Sodium key pair (for local testing)
 node -e "
   const sodium = require('libsodium-wrappers');
   (async () => {
@@ -77,82 +77,48 @@ node -e "
 "
 
 Copy the printed keys into a local .env file:
-
 VITE_SERVER_PUB_KEY=<base64‑public‑key>
 SERVER_PRIV_KEY=<base64‑private‑key>
 
-- Important: In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
-
-### Run the development server
-
+Important: In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
+Run the development server
 npm run dev
+
 Open http://localhost:5173 – you should see the demo UI with a consent banner and an encrypted form.
+Deploying to Netlify
+Create a Netlify site (the free tier works fine).
+Connect the site to this GitHub repository.
+Configure build settings
+Setting	Value
+Build command	npm run build
+Publish directory	dist (Vite outputs here)
+Add environment variables
+(Settings → Build & Deploy → Environment)
+Variable	Description
+SERVER_PRIV_KEY	Base64‑encoded private key for the function
+VITE_SERVER_PUB_KEY	Base64‑encoded public key (exposed to front‑end)
+Push a commit – Netlify will trigger the CI pipeline, build the front‑end, and publish the site at https://securewebproducts.netlify.app.
+CI & Security Pipeline
+The workflow defined in .github/workflows/ci.yml runs on every push and pull request to main:
+Frontend – lint (eslint), unit tests (vitest), Vite build.
+Backend (Netlify functions) – separate lint and dependency audit.
+Security Audits – npm audit --audit-level=high flags high‑severity vulnerabilities.
+Optional SonarCloud – static analysis and quality gate (requires a SONAR_TOKEN secret).
+If any step fails (e.g., a high‑severity vulnerability), the job aborts and the merge is blocked.
+Product‑Management Documents
+All artefacts live under docs/ and are version‑controlled alongside the code.
+Document	Purpose
+roadmap.md	Quarterly product roadmap with features, compliance milestones, and success metrics.
+regulatory-matrix.md	Live checklist mapping GDPR, CCPA, ISO 27701, etc., to implemented features.
+stakeholder-map.md	Roles, responsibilities, and deliverables for PM, Engineering, UX, Legal, Security, Ops.
+Use these during sprint planning, stakeholder demos, and compliance reviews.
+Extending the Template
+Add more Netlify functions – drop additional files under netlify/functions/.
+Swap Vite for another bundler – just update the package.json scripts and CI build step.
+Persist audit logs – integrate Netlify KV, FaunaDB, Supabase, or another datastore.
+Enable SonarCloud – add the SONAR_TOKEN secret and uncomment the sonarcloud job.
+Add extra compliance checks – extend regulatory-matrix.md and create automated tests for them.
+License
+This starter kit is released under the MIT License – feel free to fork, modify, and ship your own privacy‑first product.
 
----
 
-## Deploying to Netlify
-
-1. **Create a Netlify site** (the free tier works fine).  
-2. **Connect the site** to this GitHub repository.  
-
-### Configure build settings
-
-| Setting          | Value                         |
-|------------------|-------------------------------|
-| **Build command**| `npm run build`               |
-| **Publish directory** | `src/dist` (Vite outputs here) |
-
-### Add environment variables  
-*(Settings → Build & Deploy → Environment)*
-
-| Variable           | Description                                            |
-|--------------------|--------------------------------------------------------|
-| `SERVER_PRIV_KEY`  | Base64‑encoded private key for the function             |
-| `VITE_SERVER_PUB_KEY` | Base64‑encoded public key (exposed to front‑end)   |
-
-3. **Push a commit** – Netlify will trigger the CI pipeline, build the front‑end, and publish the site at `https://securewebproducts.netlify.app`.
-
----
-
-## CI & Security Pipeline
-
-The workflow defined in `.github/workflows/ci.yml` runs on every push and pull request to `main`:
-
-- **Frontend** – lint (`eslint`), unit tests (`vitest`), Vite build.  
-- **Backend (Netlify functions)** – separate lint and dependency audit.  
-- **Security Audits** – `npm audit --audit-level=high` flags high‑severity vulnerabilities.  
-- **Optional SonarCloud** – static analysis and quality gate (requires a `SONAR_TOKEN` secret).
-
-> **If any step fails** (e.g., a high‑severity vulnerability), the job aborts and the merge is blocked.
-
----
-
-## Product‑Management Documents
-
-All artefacts live under `docs/` and are version‑controlled alongside the code.
-
-| Document            | Purpose                                                                 |
-|---------------------|-------------------------------------------------------------------------|
-| `roadmap.md`        | Quarterly product roadmap with features, compliance milestones, and success metrics. |
-| `regulatory-matrix.md` | Live checklist mapping GDPR, CCPA, ISO 27701, etc., to implemented features. |
-| `stakeholder-map.md`   | Roles, responsibilities, and deliverables for PM, Engineering, UX, Legal, Security, Ops. |
-
-*Use these during sprint planning, stakeholder demos, and compliance reviews.*
-
----
-
-## Extending the Template
-
-- **Add more Netlify functions** – drop additional files under `netlify/functions/`.  
-- **Swap Vite for another bundler** – just update the `package.json` scripts and CI build step.  
-- **Persist audit logs** – integrate Netlify KV, FaunaDB, Supabase, or another datastore.  
-- **Enable SonarCloud** – add the `SONAR_TOKEN` secret and uncomment the `sonarcloud` job.  
-- **Add extra compliance checks** – extend `regulatory-matrix.md` and create automated tests for them.
-
----
-
-## License
-
-This starter kit is released under the **MIT License** – feel free to fork, modify, and ship your own privacy‑first product.
-
----
