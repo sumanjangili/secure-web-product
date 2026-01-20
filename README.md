@@ -82,17 +82,11 @@ Copy the printed keys into a local .env file:
 VITE_SERVER_PUB_KEY=<base64‑public‑key>
 SERVER_PRIV_KEY=<base64‑private‑key>
 
-- **Important**: In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
+- Important: In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
 
 ## Run the development server
 
 npm run dev
-<<<<<<< HEAD
-
-# Support this project
-[![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)
-=======
 Open http://localhost:5173 – you should see the demo UI with a consent banner and an encrypted form.
 
 ## Deploying to Netlify
