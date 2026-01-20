@@ -89,6 +89,8 @@ SERVER_PRIV_KEY=<base64‑private‑key>
 npm run dev
 Open http://localhost:5173 – you should see the demo UI with a consent banner and an encrypted form.
 
+---
+
 ## Deploying to Netlify
 
 1. **Create a Netlify site** (the free tier works fine).  
@@ -154,4 +156,4 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 
 This starter kit is released under the **MIT License** – feel free to fork, modify, and ship your own privacy‑first product.
 
-
+---
