@@ -2,20 +2,20 @@
 
 A minimal, production‑ready template for building a **privacy‑first web application** that demonstrates a secure product vision, keeps engineering aligned, and ships with CI security checks.
 
-[![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/) 
+[![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)  
+[![Ko‑fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)  
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sumanjangili/secure-web-product/blob/main/LICENSE)  
+[![Node.js ≥20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
 The repo contains:
 
 * 📄 Product‑management artefacts (roadmap, regulatory matrix, stakeholder map)  
 * 🗂️ A React front‑end built with Vite  
-* 🔐 End‑to‑end encryption utilities (\`libsodium-wrappers\`)  
+* 🔐 End‑to‑end encryption utilities (`libsodium-wrappers`)  
 * ⚙️ Netlify serverless function for an immutable audit‑log  
 * 👷‍♀️ GitHub Actions workflow that lints, tests, builds, and runs security audits  
 
-> **TL;DR** – Clone, set the required Netlify env vars, push to GitHub, and Netlify will build & deploy a live demo at \`https://securewebproducts.netlify.app\`.
+> **TL;DR** – Clone, set the required Netlify env vars, push to GitHub, and Netlify will build & deploy a live demo at `https://securewebproducts.netlify.app`.
 
 ---
 
@@ -35,12 +35,12 @@ The repo contains:
 
 Secure Web Products is a **privacy‑first** demo application built to showcase:
 
-| Goal | Why it matters |
-|------|----------------|
-| Privacy‑first UX | All data is encrypted client‑side; no telemetry is collected. |
-| Transparent architecture | Frontend communicates only with a Netlify serverless function that writes to an immutable log (e.g., Cloudflare KV or AWS S3). |
-| CI security hardening | Every commit runs static analysis, dependency scanning, and a custom security script (`npm run security`). |
-| Open collaboration | Clear contribution guidelines and a welcoming community space. |
+| Goal                     | Why it matters |
+|--------------------------|----------------|
+| **Privacy‑first UX**     | All data is encrypted client‑side; no telemetry is collected. |
+| **Transparent architecture** | Front‑end talks only to a Netlify serverless function that writes to an immutable log (e.g., Cloudflare KV or AWS S3). |
+| **CI security hardening**| Every commit runs static analysis, dependency scanning, and a custom security script (`npm run security`). |
+| **Open collaboration**   | Clear contribution guidelines and a welcoming community space. |
 
 The repo is deliberately minimal so newcomers can focus on the core concepts without being distracted by unrelated tooling.
 
@@ -50,9 +50,9 @@ The repo is deliberately minimal so newcomers can focus on the core concepts wit
 
 ### Prerequisites
 
-- **Node 20** (or newer) – the CI workflow uses `setup-node@v3`.  
-- **npm / pnpm / yarn** – whichever you prefer for installing dependencies.  
-- **libsodium‑wrappers** – bundled via npm; no native compilation needed.
+* **Node 20** (or newer) – the CI workflow uses `setup-node@v3`.  
+* **npm / pnpm / yarn** – whichever you prefer for installing dependencies.  
+* **libsodium‑wrappers** – bundled via npm; no native compilation needed.
 
 ### Installation
 
@@ -61,11 +61,10 @@ The repo is deliberately minimal so newcomers can focus on the core concepts wit
 git clone https://github.com/sumanjangili/secure-web-product.git
 cd secure-web-product
 
-## Install front‑end dependencies
-
+# Install front‑end dependencies
 npm ci   # or `pnpm install` / `yarn install`
 
-## Generate a Sodium key pair (for local testing)
+### Generate a Sodium key pair (for local testing)
 
 node -e "
   const sodium = require('libsodium-wrappers');
@@ -84,7 +83,7 @@ SERVER_PRIV_KEY=<base64‑private‑key>
 
 - Important: In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
 
-## Run the development server
+### Run the development server
 
 npm run dev
 Open http://localhost:5173 – you should see the demo UI with a consent banner and an encrypted form.
