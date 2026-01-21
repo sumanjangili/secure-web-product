@@ -1,6 +1,6 @@
 # Secure Web Product Starter Kit
 
-A minimal, production‑ready template for building a **privacy‑first web application** that demonstrates a secure product vision, keeps engineering aligned, and ships with CI security checks.
+"Secure Web Product maintains **product management artifacts** and serves as a **privacy-first audit logging solution**, offering a production-ready template for building privacy-first web applications that demonstrate a secure product vision, keep engineering aligned and integrate CI security checks."
 
 [![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)  
 [![Ko‑fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)  
