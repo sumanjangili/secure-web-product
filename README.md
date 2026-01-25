@@ -1,13 +1,12 @@
-# Secure Web Product Starter Kit
-
-"Secure Web Product maintains **product management artifacts** and serves as a **privacy-first audit logging solution**, offering a production-ready template for building privacy-first web applications that demonstrate a secure product vision, keep engineering aligned and integrate CI security checks."
 
 [![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)  
 [![Ko‑fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)  
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sumanjangili/secure-web-product/blob/main/LICENSE)  
 [![Node.js ≥20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
-The repo contains:
+# Secure Web Product Starter Kit
+
+"Secure Web Product maintains **product management artifacts** and serves as a **privacy-first audit logging solution**, offering a production-ready template for building privacy-first web applications that demonstrate a secure product vision, keep engineering aligned and integrate CI security checks.” The repo contains:
 
 * 📄 Product‑management artefacts (roadmap, regulatory matrix, stakeholder map)  
 * 🗂️ A React front‑end built with Vite  
@@ -56,38 +55,47 @@ The repo is deliberately minimal so newcomers can focus on the core concepts wit
 
 ### Installation
 
-```bash
-### Clone the repo
-git clone https://github.com/sumanjangili/secure-web-product.git
-cd secure-web-product
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/sumanjangili/secure-web-product.git
 
-### Install front‑end dependencies
+2. Navigate to the project directory:
+
+   cd secure-web-product/frontend
+
+3. Install front‑end dependencies
 npm ci   # or `pnpm install` / `yarn install`
 
 ### Generate a Sodium key pair (for local testing)
 
-```bash
 node -e "
+
   const sodium = require('libsodium-wrappers');
+  
   (async () => {
+  
     await sodium.ready;
-    const kp = sodium.crypto_box_keypair();
-    console.log('PUBLIC:', sodium.to_base64(kp.publicKey));
-    console.log('PRIVATE:', sodium.to_base64(kp.privateKey));
+    
+    const kp = sodium.crypto\_box\_keypair();
+    
+    console.log('PUBLIC:', sodium.to\_base64(kp.publicKey));
+    
+    console.log('PRIVATE:', sodium.to\_base64(kp.privateKey));
+    
   })();
+  
 "
+
 Copy the printed keys into a local .env file:
-
-VITE_SERVER_PUB_KEY=<base64‑public‑key>
-SERVER_PRIV_KEY=<base64‑private‑key>
-
+VITE\_SERVER\_PUB\_KEY=<base64‑public‑key>
+SERVER\_PRIV\_KEY=<base64‑private‑key>
 Important: In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
 
-### Run the development server
-
+Run the development server
 npm run dev
+``\`
 
-Open http://localhost:5173 – you should see the demo UI with a consent banner and an encrypted form.
+Open `http://localhost:5173` – you should see the demo UI with a consent banner and an encrypted form.
 
 ---
 
@@ -111,11 +119,11 @@ Open http://localhost:5173 – you should see the demo UI with a consent banner 
 | `SERVER_PRIV_KEY`  | Base64‑encoded private key for the function             |
 | `VITE_SERVER_PUB_KEY` | Base64‑encoded public key (exposed to front‑end)   |
 
-3. **Push a commit** – Netlify will trigger the CI pipeline, build the front‑end, and publish the site at `https://<your‑site>.netlify.app`.
+3. **Push a commit** – Netlify will trigger the CI pipeline, build the front‑end, and publish the site at `https://securewebproducts.netlify.app`.
 
 ---
 
-## CI & Security Pipeline
+## CI & Security Pipeline
 
 The workflow defined in `.github/workflows/ci.yml` runs on every push and pull request to `main`:
 
@@ -128,7 +136,7 @@ The workflow defined in `.github/workflows/ci.yml` runs on every push and pull r
 
 ---
 
-## Product‑Management Documents
+## Product-Management Documents
 
 All artefacts live under `docs/` and are version‑controlled alongside the code.
 
@@ -155,4 +163,3 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 ## License
 
 This starter kit is released under the **MIT License** – feel free to fork, modify, and ship your own privacy‑first product.
-
