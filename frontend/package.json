@@ -1,7 +1,7 @@
 {
-  "name": "secure-web-product",
+  "name": "@suman-jangili/secure-web-product",
   "version": "0.1.0",
-  "private": true,
+  "__comment": "A privacy‑first audit‑logging solution that also serves as a product‑management hub.",
   "type": "module",
   "scripts": {
     "clean": "bash ./scripts/clean.sh",
@@ -41,5 +41,30 @@
     "typescript": "^5.9.3",
     "vite": "^7.2.0",
     "vitest": "^4.0.7"
-  }
+  },
+  "description": "A privacy‑first audit‑logging solution (maintains product management artifacts, encryption, Netlify serverless function that writes to an immutable log.)",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "keywords": [
+    "vite",
+    "react",
+    "docs"
+  ],
+  "author": "Suman Jangili",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sumanjangili/secure-web-product.git",
+    "directory": "frontend"
+  },
+  "bugs": {
+    "url": "https://github.com/sumanjangili/secure-web-product/issues"
+  },
+  "homepage": "https://github.com/sumanjangili/secure-web-product",
+  "files": [
+    "dist",
+    "README.md"
+  ]
 }
