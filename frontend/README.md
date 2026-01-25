@@ -1,73 +1,89 @@
-# React + TypeScript + Vite
+# Secure Web Product Starter Kit  
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A privacy‑first audit‑logging solution that also serves as a product‑management hub.  
+It ships a minimal Vite + React front‑end, a Netlify serverless function for immutable logs, and a set of documentation artefacts (roadmap, regulatory matrix, stakeholder map).
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Features  
 
-## React Compiler
+- **Docs** – Version‑controlled product‑management artefacts (`docs/`).  
+- **Privacy‑first UX** – All data encrypted client‑side; no telemetry collected.  
+- **Transparent Architecture** – Front‑end talks only to a Netlify serverless function that writes to an immutable log.  
+- **Minimal Vite‑React UI** – Demonstrates privacy‑first components, client‑side cryptography, and audit‑log integration.  
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## Installation  
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Add the package to any Node project:
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+From npm
+```bash
+npm install @suman-jangili/secure-web-product
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+Or using the shorthand
+npm i @suman-jangili/secure-web-product
+Note: The package publishes its TypeScript declaration files (.d.ts) automatically, so consumers get full type safety out of the box.*
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Development
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+If you want to work on the source code itself:
+1. Clone the repository:
+    git clone https://github.com/sumanjangili/secure-web-product.git
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+2. Navigate to the project directory:
+   cd secure-web-product/frontend
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+3. Install front‑end dependencies:
+   npm ci
+
+4. Run the front‑end development server (Vite):
+   npm run dev        # → http://localhost:5173
+
+Scripts
+
+SCRIPT	DESCRIPTION
+dev	Starts the Vite dev server (localhost:5173).
+build	Produces a production bundle in dist/.
+lint	Runs ESLint over the codebase.
+type-check	Executes tsc --noEmit to verify TypeScript types.
+test	Runs Vitest unit tests.
+generate-docs	Generates markdown docs from source (see scripts/).
+
+Building & Publishing
+When you’re ready to release a new version to npm:
+1. Bump the version (patch/minor/major):
+   npm version patch
+  
+2. Build the production assets:
+   npm run build
+
+3. Publish the package (public access):
+   npm publish --access public
+
+The npm version command automatically creates a Git tag, updates package.json, and commits the change.
+Contributing
+
+We welcome contributions! Please follow these steps:
+1. Fork the repository.
+2. Create a feature branch:
+   git checkout -b feat/awesome-feature
+
+3. Implement your change.
+4. Run the test suite and linting:
+   npm test
+   npm run lint
+5. Ensure TypeScript compiles without errors:
+   npm run type-check
+6. Open a Pull Request against the main branch.
+
+Guidelines
+
+Keep the public API stable.
+Add documentation for any new endpoints or UI components.
+Update the changelog (CHANGELOG.md) with a concise entry.
+
+License
+
+MIT © Suman Jangili. See the LICENSE file for full terms.
