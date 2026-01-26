@@ -24,6 +24,7 @@ coverage/
 
 # Allow audit_log.js even though other JS files are ignored
 !netlify/functions/audit_log.js
+!netlify/functions/github-webhook.js
 
 # Netlify function bundles
 netlify/functions/*.js
