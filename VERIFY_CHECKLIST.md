@@ -17,11 +17,13 @@ Add a brief note (or PR link) next to the checkbox to create an audit trail.
 | 9️⃣ | Branch protection & permissions verified | - [ ] |
 | 🔟 | All reviewers sign‑off | - [ ] |
 
-### How to use
+## How to use
 
-1. **Copy** the entire block above into `VERIFY_CHECKLIST.md` at the root of the repository.  
+1. **Copy** the block above into `VERIFY_CHECKLIST.md` at the root of the repository.  
 2. As each verification step completes, replace `- [ ]` with `- [x]`.  
-3. Add a short comment (e.g., a PR number or link) after the checkbox to document *when* and *how* the item was satisfied, for example:  
+3. Add a short comment (e.g., a PR number, a link to a CI run, or a ticket ID) after the checkbox to document *when* and *how* the item was satisfied, for example:
 
-   ```markdown
-   - [x] <!-- PR #1234 – repo layout validated -->
+```markdown
+- [x] <!-- PR #1234 – repo layout validated -->
+- [x] <!-- CI run https://github.com/sumanjangili/secure-web-product/actions/runs/987654321 -->
+- [x] <!-- Lint & tests passed on `feature/smoke‑test` -->
