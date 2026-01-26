@@ -7,9 +7,9 @@
 // import.meta.url.
 // ─────────────────────────────────────────────────────────────
 
-import { promises as fs } from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
+import { promises as fs } from "fs";
+import * as path from "path";
+import { fileURLToPath } from "url";
 
 // ---------------------------------------------------------------
 // ES‑module equivalent of __dirname / __filename
@@ -20,8 +20,8 @@ const __dirname = path.dirname(__filename);
 // ---------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------
-const DOCS_ROOT = path.resolve(__dirname, '../../', 'docs');
-const OUTPUT_FILE = path.join(DOCS_ROOT, 'COMBINED.md');
+const DOCS_ROOT = path.resolve(__dirname, "../../", "docs");
+const OUTPUT_FILE = path.join(DOCS_ROOT, "COMBINED.md");
 
 // ---------------------------------------------------------------
 // Helper utilities
@@ -30,12 +30,12 @@ function slugify(heading: string): string {
   return heading
     .trim()
     .toLowerCase()
-    .replace(/[^\w\s-]/g, '') // remove punctuation
-    .replace(/\s+/g, '-');
+    .replace(/[^\w\s-]/g, "") // remove punctuation
+    .replace(/\s+/g, "-");
 }
 
 async function readMarkdown(filePath: string): Promise<string> {
-  return await fs.readFile(filePath, 'utf-8');
+  return await fs.readFile(filePath, "utf-8");
 }
 
 /**
@@ -60,26 +60,31 @@ function extractTitle(content: string, fallback: string): string {
       .filter(
         (e) =>
           e.isFile() &&
-          e.name.endsWith('.md') &&
+          e.name.endsWith(".md") &&
           e.name !== path.basename(OUTPUT_FILE),
       )
       .map((e) => e.name);
 
     if (mdFiles.length === 0) {
-      console.warn('⚠️ No markdown files found in docs/. Nothing to do.');
+      console.warn("⚠️ No markdown files found in docs/. Nothing to do.");
       return;
     }
 
     // -----------------------------------------------------------------
     // 2️⃣ Build Table of Contents + combined body
     // -----------------------------------------------------------------
-    const tocLines: string[] = ['# Combined Documentation', '', '## Table of Contents', ''];
+    const tocLines: string[] = [
+      "# Combined Documentation",
+      "",
+      "## Table of Contents",
+      "",
+    ];
     const bodyLines: string[] = [];
 
     for (const fileName of mdFiles) {
       const filePath = path.join(DOCS_ROOT, fileName);
       const raw = await readMarkdown(filePath);
-      const title = extractTitle(raw, fileName.replace(/\.md$/, ''));
+      const title = extractTitle(raw, fileName.replace(/\.md$/, ""));
 
       const anchor = slugify(title);
       tocLines.push(`- [${title}](#${anchor})`);
@@ -92,20 +97,22 @@ function extractTitle(content: string, fallback: string): string {
     // -----------------------------------------------------------------
     // 3️⃣ Assemble final markdown
     // -----------------------------------------------------------------
-    const finalContent = [...tocLines, ...bodyLines].join('\n');
+    const finalContent = [...tocLines, ...bodyLines].join("\n");
 
     // -----------------------------------------------------------------
     // 4️⃣ Write to COMBINED.md (create/overwrite)
     // -----------------------------------------------------------------
-    await fs.writeFile(OUTPUT_FILE, finalContent, 'utf-8');
+    await fs.writeFile(OUTPUT_FILE, finalContent, "utf-8");
 
     // -----------------------------------------------------------------
     // 5️⃣ Log a friendly summary
     // -----------------------------------------------------------------
     console.log(`✅ Generated ${path.relative(process.cwd(), OUTPUT_FILE)}`);
-    console.log(`   Processed ${mdFiles.length} file(s): ${mdFiles.join(', ')}`);
+    console.log(
+      `   Processed ${mdFiles.length} file(s): ${mdFiles.join(", ")}`,
+    );
   } catch (err) {
-    console.error('❌ Failed to generate combined docs:', err);
+    console.error("❌ Failed to generate combined docs:", err);
     process.exit(1);
   }
 })();

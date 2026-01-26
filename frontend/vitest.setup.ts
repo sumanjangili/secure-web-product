@@ -1,6 +1,6 @@
 // vitest.setup.ts
-import { beforeEach, afterEach, vi } from 'vitest';
-import '@testing-library/jest-dom';
+import { beforeEach, afterEach, vi } from "vitest";
+import "@testing-library/jest-dom";
 
 /**
  * Very small in‑memory implementation of the Web Storage API.

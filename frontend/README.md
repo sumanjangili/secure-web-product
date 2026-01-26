@@ -1,24 +1,25 @@
-# Secure Web Product Starter Kit  
+# Secure Web Product Starter Kit
 
 A privacy‑first audit‑logging solution that also serves as a product‑management hub.  
 It ships a minimal Vite + React front‑end, a Netlify serverless function for immutable logs, and a set of documentation artefacts (roadmap, regulatory matrix, stakeholder map).
 
 ---
 
-## Features  
+## Features
 
-- **Docs** – Version‑controlled product‑management artefacts (`docs/`).  
-- **Privacy‑first UX** – All data encrypted client‑side; no telemetry collected.  
-- **Transparent Architecture** – Front‑end talks only to a Netlify serverless function that writes to an immutable log.  
-- **Minimal Vite‑React UI** – Demonstrates privacy‑first components, client‑side cryptography, and audit‑log integration.  
+- **Docs** – Version‑controlled product‑management artefacts (`docs/`).
+- **Privacy‑first UX** – All data encrypted client‑side; no telemetry collected.
+- **Transparent Architecture** – Front‑end talks only to a Netlify serverless function that writes to an immutable log.
+- **Minimal Vite‑React UI** – Demonstrates privacy‑first components, client‑side cryptography, and audit‑log integration.
 
 ---
 
-## Installation  
+## Installation
 
 Add the package to any Node project:
 
 From npm
+
 ```bash
 npm install @suman-jangili/secure-web-product
 
@@ -55,7 +56,7 @@ Building & Publishing
 When you’re ready to release a new version to npm:
 1. Bump the version (patch/minor/major):
    npm version patch
-  
+
 2. Build the production assets:
    npm run build
 
@@ -87,3 +88,4 @@ Update the changelog (CHANGELOG.md) with a concise entry.
 License
 
 MIT © Suman Jangili. See the LICENSE file for full terms.
+```

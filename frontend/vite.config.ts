@@ -1,6 +1,6 @@
 // frontend/vite.config.ts
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
 // -----------------------------------------------------------------
 // Vite configuration
@@ -20,7 +20,7 @@ export default defineConfig({
   // Build options – production bundle goes into `dist/`
   // -------------------------------------------------------------
   build: {
-    outDir: 'dist',
+    outDir: "dist",
     sourcemap: false,
   },
 
@@ -28,11 +28,11 @@ export default defineConfig({
   // Vitest configuration (so `npm test` works)
   // -------------------------------------------------------------
   test: {
-    globals: true,               // make `test`, `expect`, etc. global
-    environment: 'jsdom',        // DOM environment for React components
+    globals: true, // make `test`, `expect`, etc. global
+    environment: "jsdom", // DOM environment for React components
     // setupFiles: ['./src/setupTests.ts'], // optional – we’ll create this next
-    setupFiles: ['./vitest.setup.ts'],
+    setupFiles: ["./vitest.setup.ts"],
     // include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
-    include: ['src/components/__tests__/**/*.test.{js,ts,jsx,tsx}'],
+    include: ["src/components/__tests__/**/*.test.{js,ts,jsx,tsx}"],
   },
 });
