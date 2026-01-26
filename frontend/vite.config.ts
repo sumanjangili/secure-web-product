@@ -30,7 +30,9 @@ export default defineConfig({
   test: {
     globals: true,               // make `test`, `expect`, etc. global
     environment: 'jsdom',        // DOM environment for React components
-    setupFiles: ['./src/setupTests.ts'], // optional – we’ll create this next
-    include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
+    // setupFiles: ['./src/setupTests.ts'], // optional – we’ll create this next
+    setupFiles: ['./vitest.setup.ts'],
+    // include: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
+    include: ['src/components/__tests__/**/*.test.{js,ts,jsx,tsx}'],
   },
 });

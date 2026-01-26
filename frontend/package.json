@@ -21,7 +21,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@testing-library/dom": "^9.3.4",
-    "@testing-library/jest-dom": "^6.4.0",
+    "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^14.3.1",
     "@testing-library/user-event": "^14.5.0",
     "@types/node": "^24.10.0",
@@ -34,7 +34,7 @@
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.24",
     "glob": "^9.3.5",
-    "jsdom": "^27.1.0",
+    "jsdom": "^27.4.0",
     "prettier": "^3.6.2",
     "rimraf": "^4.4.1",
     "ts-node": "^10.9.2",
