@@ -7,9 +7,9 @@ Add a brief note (or PR link) next to the checkbox to create an audit trail.
 | # | Item | Status |
 |---|------|--------|
 | 1️⃣ | Repo structure reviewed | - [ ] |
-| 2️⃣ | CI pipeline passes on a fresh branch | - [ ] |
-| 3️⃣ | Lint, type‑check, and tests all green | - [ ] |
-| 4️⃣ | No vulnerable dependencies reported | - [ ] |
+| 2️⃣ | CI pipeline passes on a fresh branch | - [x] <!-- CI run --> |
+| 3️⃣ | Lint, type‑check, and tests all green | - [x] <!-- Lint & tests passed on feature/smoke-test --> |
+| 4️⃣ | No vulnerable dependencies reported | - [x] <!-- npm audit clean --> |
 | 5️⃣ | Secret scanning clean | - [ ] |
 | 6️⃣ | Docs up‑to‑date and include contribution steps | - [ ] |
 | 7️⃣ | Production build succeeds and deploys to a staging URL | - [ ] |
