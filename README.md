@@ -2,6 +2,7 @@
 [![Sponsor me on GitHub](https://img.shields.io/badge/Sponsor-💖-orange)](https://github.com/sponsors/sumanjangili)  
 [![Ko‑fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G21S383T)  
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sumanjangili/secure-web-product/blob/main/LICENSE)  
+![Version](https://img.shields.io/github/v/tag/sumanjangili/secure-web-product?label=version)
 [![Node.js ≥20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
 # Secure Web Product Starter Kit
@@ -10,27 +11,30 @@
 
 * 📄 Product‑management artefacts (roadmap, regulatory matrix, stakeholder map)  
 * 🗂️ A React front‑end built with Vite  
-* 🔐 End‑to‑end encryption utilities (`libsodium-wrappers`)  
+* 🔐 End‑to‑end encryption utilities (`libsodium-wrappers`)
+**Security note** – All cryptographic operations happen in the browser using `libsodium‑wrappers`. No plaintext data ever leaves the client; the Netlify function only receives already‑encrypted blobs and writes them to an immutable log. Review `netlify/functions/audit‑log.js` for input sanitisation and secret handling.
 * ⚙️ Netlify serverless function for an immutable audit‑log  
 * 👷‍♀️ GitHub Actions workflow that lints, tests, builds, and runs security audits  
 
-> **TL;DR** – Clone, set the required Netlify env vars, push to GitHub, and Netlify will build & deploy a live demo at `https://securewebproducts.netlify.app`.
+> Clone, set the required Netlify env vars, push to GitHub, and Netlify will build & deploy a live demo at `https://securewebproducts.netlify.app`.
 
 ---
 
-## Table of Contents
+### Table of Contents
 
 1. [Project Overview & Goals](#project-overview--goals)  
 2. [Getting Started Locally](#getting-started-locally)  
 3. [Deploying to Netlify](#deploying-to-netlify)  
 4. [CI & Security Pipeline](#ci--security-pipeline)  
 5. [Product‑Management Documents](#product-management-documents)  
-6. [Extending the Template](#extending-the-template)  
-7. [License](#license)  
+6. [Testing Locally](#testing-locally)
+7. [Extending the Template](#extending-the-template)  
+8. [Verification Checklist](#verification-checklist)
+9. [License](#license)  
 
 ---
 
-## Project Overview & Goals
+### Project Overview & Goals
 
 Secure Web Products is a **privacy‑first** demo application built to showcase:
 
@@ -42,88 +46,80 @@ Secure Web Products is a **privacy‑first** demo application built to showc
 | **Open collaboration**   | Clear contribution guidelines and a welcoming community space. |
 
 The repo is deliberately minimal so newcomers can focus on the core concepts without being distracted by unrelated tooling.
+> A quick‑reference checklist is provided in VERIFY_CHECKLIST.md. It covers repository sanity, CI validation, dependency hygiene, security verification, and smoke‑test steps. Teams are encouraged to run through it before any release.
 
 ---
 
-## Getting Started Locally
+### Getting Started Locally
 
-### Prerequisites
-
+##### Prerequisites
 * **Node 20** (or newer) – the CI workflow uses `setup-node@v3`.  
-* **npm / pnpm / yarn** – whichever you prefer for installing dependencies.  
+* **npm** - for installing dependencies.  
 * **libsodium‑wrappers** – bundled via npm; no native compilation needed.
+* **GitHub CLI**(optional, for quick PR checks).
+* **Netlify CLI(for local function testing).
 
-### Installation
-
-1. Clone the repository:
+##### Installation
    ```bash
    git clone https://github.com/sumanjangili/secure-web-product.git
-
-2. Navigate to the project directory:
-
    cd secure-web-product/frontend
-
-3. Install front‑end dependencies
-npm ci   # or `pnpm install` / `yarn install`
-
-### Generate a Sodium key pair (for local testing)
-
-node -e "
-
+   npm ci   # or `pnpm install` / `yarn install`
+   ```    
+##### Generate a Sodium key pair (local testing)
+```js
+  node -e "
   const sodium = require('libsodium-wrappers');
-  
   (async () => {
-  
     await sodium.ready;
-    
     const kp = sodium.crypto\_box\_keypair();
-    
     console.log('PUBLIC:', sodium.to\_base64(kp.publicKey));
-    
     console.log('PRIVATE:', sodium.to\_base64(kp.privateKey));
-    
   })();
-  
-"
-
+  "
+```
 Copy the printed keys into a local .env file:
+```js 
 VITE\_SERVER\_PUB\_KEY=<base64‑public‑key>
 SERVER\_PRIV\_KEY=<base64‑private‑key>
-Important: In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
+VITE_API_URL=
+VITE_AUDIT_LOG_ENDPOINT=
+``` 
+> **Important:** In production these variables belong in Netlify’s Build & Deploy → Environment settings, not in source control.
 
-Run the development server
+**Run the development server**
+```bash
 npm run dev
-``\`
-
+```
 Open `http://localhost:5173` – you should see the demo UI with a consent banner and an encrypted form.
 
 ---
 
-## Deploying to Netlify
+### Deploying to Netlify
 
 1. **Create a Netlify site** (the free tier works fine).  
 2. **Connect the site** to this GitHub repository.  
 
-### Configure build settings
+##### Configure build settings
 
 | Setting          | Value                         |
 |------------------|-------------------------------|
 | **Build command**| `npm run build`               |
 | **Publish directory** | `dist` (Vite outputs here) |
 
-### Add environment variables  
+##### Add environment variables  
 *(Settings → Build & Deploy → Environment)*
 
 | Variable           | Description                                            |
 |--------------------|--------------------------------------------------------|
 | `SERVER_PRIV_KEY`  | Base64‑encoded private key for the function             |
 | `VITE_SERVER_PUB_KEY` | Base64‑encoded public key (exposed to front‑end)   |
+| `VITE_API_URL`     | API endpoint used by the front‑end (if any)           |
 
 3. **Push a commit** – Netlify will trigger the CI pipeline, build the front‑end, and publish the site at `https://securewebproducts.netlify.app`.
 
 ---
 
-## CI & Security Pipeline
+### CI & Security Pipeline
 
 The workflow defined in `.github/workflows/ci.yml` runs on every push and pull request to `main`:
 
@@ -134,9 +130,15 @@ The workflow defined in `.github/workflows/ci.yml` runs on every push and pull r
 
 > **If any step fails** (e.g., a high‑severity vulnerability), the job aborts and the merge is blocked.
 
----
+##### GitHub Actions Workflow (`.github/workflows/ci.yml`) 
+- **Triggers**: `push` and `pull_request` on `main` and `dev`. 
+- **Jobs**: `lint`, `type-check`, `test`, `build`, `security-audit`, `deploy` (Netlify). 
+- **Caching**: `actions/cache@v3` for `node_modules` and lockfiles. 
+- **Fail‑fast**: each step aborts on error, preventing merges with broken builds.
 
-## Product-Management Documents
+--- 
+
+### Product-Management Documents
 
 All artefacts live under `docs/` and are version‑controlled alongside the code.
 
@@ -145,12 +147,24 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 | `roadmap.md`        | Quarterly product roadmap with features, compliance milestones, and success metrics. |
 | `regulatory-matrix.md` | Live checklist mapping GDPR, CCPA, ISO 27701, etc., to implemented features. |
 | `stakeholder-map.md`   | Roles, responsibilities, and deliverables for PM, Engineering, UX, Legal, Security, Ops. |
-
+| `README.md`         | Project purpose, quick start, testing, deployment instructions. |
+| `scripsts/generate-docs.ts` | Generates up‑to‑date markdown from source data (`npm run gen-docs`). |
 *Use these during sprint planning, stakeholder demos, and compliance reviews.*
 
 ---
 
-## Extending the Template
+### Running Tests Locally
+```bash
+ `npm test` – executes Vitest/Jest unit tests. 
+ `npm run lint` – runs ESLint + Prettier checks.
+ `npm run type-check` – runs `tsc --noEmit`.
+ `npm run security` – runs `npm audit` and any custom checks. 
+```
+Add `--coverage` to the test command to generate a coverage report; aim for **≥80 **% on critical modules (e.g.` crypto.ts`, UI components).
+
+---
+
+### Extending the Template
 
 - **Add more Netlify functions** – drop additional files under `netlify/functions/`.  
 - **Swap Vite for another bundler** – just update the `package.json` scripts and CI build step.  
@@ -160,6 +174,14 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 
 ---
 
-## License
+- See our [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit PRs, run the CI locally, and sign the CLA.
 
-This starter kit is released under the **MIT License** – feel free to fork, modify, and ship your own privacy‑first product.
+### [Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
+
+---
+
+### License
+
+This starter kit is released under the **MIT License** – feel free to fork, modify, and ship your own privacy‑first audit logging solution product.
+
+---
