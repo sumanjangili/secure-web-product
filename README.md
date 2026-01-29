@@ -12,7 +12,7 @@
 * 📄 Product‑management artefacts (roadmap, regulatory matrix, stakeholder map)  
 * 🗂️ A React front‑end built with Vite  
 * 🔐 End‑to‑end encryption utilities
-> **Security note** – All cryptographic operations happen in the browser using `libsodium‑wrappers`. No plaintext data ever leaves the client; the Netlify function only receives already‑encrypted blobs and writes them to an immutable log. Review `netlify/functions/audit‑log.js` for input sanitisation and secret handling.g  
+> **Security note** – All cryptographic operations happen in the browser using `libsodium‑wrappers`. No plaintext data ever leaves the client; the Netlify function only receives already‑encrypted blobs and writes them to an immutable log. Review `netlify/functions/audit‑log.js` for input sanitisation and secret handling.  
 * 👷‍♀️ GitHub Actions workflow that lints, tests, builds, and runs security audits  
 
 > Clone, set the required Netlify env vars, push to GitHub, and Netlify will build & deploy a live demo at [https://securewebproducts.netlify.app](https://securewebproducts.netlify.app).
@@ -174,7 +174,8 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 ---
 
 ### Verification checklist 
-- [Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
+
+[Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
 
 ---
 
