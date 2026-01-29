@@ -11,12 +11,11 @@
 
 * 📄 Product‑management artefacts (roadmap, regulatory matrix, stakeholder map)  
 * 🗂️ A React front‑end built with Vite  
-* 🔐 End‑to‑end encryption utilities (`libsodium-wrappers`)
-**Security note** – All cryptographic operations happen in the browser using `libsodium‑wrappers`. No plaintext data ever leaves the client; the Netlify function only receives already‑encrypted blobs and writes them to an immutable log. Review `netlify/functions/audit‑log.js` for input sanitisation and secret handling.
-* ⚙️ Netlify serverless function for an immutable audit‑log  
+* 🔐 End‑to‑end encryption utilities
+> **Security note** – All cryptographic operations happen in the browser using `libsodium‑wrappers`. No plaintext data ever leaves the client; the Netlify function only receives already‑encrypted blobs and writes them to an immutable log. Review `netlify/functions/audit‑log.js` for input sanitisation and secret handling.g  
 * 👷‍♀️ GitHub Actions workflow that lints, tests, builds, and runs security audits  
 
-> Clone, set the required Netlify env vars, push to GitHub, and Netlify will build & deploy a live demo at `https://securewebproducts.netlify.app`.
+> Clone, set the required Netlify env vars, push to GitHub, and Netlify will build & deploy a live demo at [https://securewebproducts.netlify.app](https://securewebproducts.netlify.app).
 
 ---
 
@@ -42,7 +41,6 @@ Secure Web Products is a **privacy‑first** demo application built to showc
 |--------------------------|----------------|
 | **Privacy‑first UX**     | All data is encrypted client‑side; no telemetry is collected. |
 | **Transparent architecture** | Front‑end talks only to a Netlify serverless function that writes to an immutable log (e.g., Cloudflare KV or AWS S3). |
-| **CI security hardening**| Every commit runs static analysis, dependency scanning, and a custom security script (`npm run security`). |
 | **Open collaboration**   | Clear contribution guidelines and a welcoming community space. |
 
 The repo is deliberately minimal so newcomers can focus on the core concepts without being distracted by unrelated tooling.
@@ -115,7 +113,7 @@ Open `http://localhost:5173` – you should see the demo UI with a consent banne
 | `VITE_SERVER_PUB_KEY` | Base64‑encoded public key (exposed to front‑end)   |
 | `VITE_API_URL`     | API endpoint used by the front‑end (if any)           |
 
-3. **Push a commit** – Netlify will trigger the CI pipeline, build the front‑end, and publish the site at `https://securewebproducts.netlify.app`.
+3. **Push a commit** – Netlify will trigger the CI pipeline, build the front‑end, and publish the site at [https://securewebproducts.netlify.app](https://securewebproducts.netlify.app).
 
 ---
 
@@ -149,18 +147,17 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 | `stakeholder-map.md`   | Roles, responsibilities, and deliverables for PM, Engineering, UX, Legal, Security, Ops. |
 | `README.md`         | Project purpose, quick start, testing, deployment instructions. |
 | `scripsts/generate-docs.ts` | Generates up‑to‑date markdown from source data (`npm run gen-docs`). |
-*Use these during sprint planning, stakeholder demos, and compliance reviews.*
+
+> *Use these during sprint planning, stakeholder demos, and compliance reviews.*
 
 ---
 
 ### Running Tests Locally
-```bash
  `npm test` – executes Vitest/Jest unit tests. 
  `npm run lint` – runs ESLint + Prettier checks.
  `npm run type-check` – runs `tsc --noEmit`.
  `npm run security` – runs `npm audit` and any custom checks. 
-```
-Add `--coverage` to the test command to generate a coverage report; aim for **≥80 **% on critical modules (e.g.` crypto.ts`, UI components).
+> Add `--coverage` to the test command to generate a coverage report; aim for **≥8%**% on critical modules (e.g.` crypto.ts`, UI components).
 
 ---
 
@@ -172,11 +169,12 @@ Add `--coverage` to the test command to generate a coverage report; aim for **�
 - **Enable SonarCloud** – add the `SONAR_TOKEN` secret and uncomment the `sonarcloud` job.  
 - **Add extra compliance checks** – extend `regulatory-matrix.md` and create automated tests for them.
 
----
-
 - See our [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit PRs, run the CI locally, and sign the CLA.
 
-### [Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
+---
+
+### Verification checklist 
+- [Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
 
 ---
 
@@ -184,4 +182,3 @@ Add `--coverage` to the test command to generate a coverage report; aim for **�
 
 This starter kit is released under the **MIT License** – feel free to fork, modify, and ship your own privacy‑first audit logging solution product.
 
----
