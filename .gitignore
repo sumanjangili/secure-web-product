@@ -1,6 +1,9 @@
+# =============================================================================
+# ROOT .gitignore - secure-web-product
+# =============================================================================
+
 # Node & npm
 node_modules/
-package-lock.json
 npm-debug.log
 
 # Vite / build artefacts
@@ -14,21 +17,41 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Env files
+# Environment files (CRITICAL - never commit secrets)
 .env
 .env.local
 .env.*.local
 
 # Test coverage reports
 coverage/
+*.lcov
+.nyc_output
 
-# Allow audit_log.js even though other JS files are ignored
+# Package artifacts (avoid committing binaries)
+*.tgz
+*.tar.gz
+*.zip
+
+# Netlify function bundles (source files OK, bundles ignored)
+netlify/functions/*.bundle.js
+.netlify/
+
+# =============================================================================
+# EXCEPTIONS - Keep these tracked
+# =============================================================================
+
+# Netlify function source files (not bundles)
 !netlify/functions/audit_log.js
 !netlify/functions/github-webhook.js
 
-# Netlify function bundles
-netlify/functions/*.js
-netlify/functions/*.zip
+# Documentation source files
+!docs/*.md
+!docs/**/*.md
 
-# Local Netlify folder
-.netlify
+# =============================================================================
+# DEMO SCRIPTS - Prevent accidental commits
+# =============================================================================
+
+# Demo scripts in frontend (if they exist at root)
+scripts/*-demo.ts
+scripts/*-demo.js

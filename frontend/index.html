@@ -4,14 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Secure Web Product</title>
-    <!-- Minimal CSP – adjust as you add external resources -->
+    
+    <!-- 
+      PRODUCTION CSP TEMPLATE:
+      - The build script will replace 'nonce-PLACEHOLDER' with a real random nonce.
+      - 'strict-dynamic' allows the script loaded via nonce to load other scripts (chunks).
+      - 'self' restricts resources to your domain.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+      content="default-src 'self'; script-src 'self' 'nonce-PLACEHOLDER' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
     />
   </head>
   <body>
     <div id="root"></div>
+    
+    <!-- 
+      The build script will inject the 'nonce' attribute here automatically.
+      Do NOT put a placeholder value here; the script adds it.
+    -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

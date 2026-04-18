@@ -1,10 +1,17 @@
-// vitest.setup.ts
+// frontend/vitest.setup.ts
 import { beforeEach, afterEach, vi } from "vitest";
 import "@testing-library/jest-dom";
 
+// ---------------------------------------------------------
+// MOCK: Intercept crypto module for all tests
+// ---------------------------------------------------------
+vi.mock("./src/lib/crypto", () => ({
+  encrypt: vi.fn().mockResolvedValue("mocked-encrypted-value"),
+  decrypt: vi.fn().mockResolvedValue('{"name":"test","email":"test@test.com"}'),
+}));
+
 /**
  * Very small in‑memory implementation of the Web Storage API.
- * It mimics the methods that our component (and the sanity test) use.
  */
 class SimpleMemoryStorage {
   private store: Record<string, string> = {};
@@ -28,21 +35,13 @@ class SimpleMemoryStorage {
   }
 }
 
-/**
- * Before every test we install the mock on both `window` and the global scope.
- * After each test we clear it so tests stay isolated.
- */
 beforeEach(() => {
-  // Attach to the JSDOM `window` (available because we run with environment: 'jsdom')
-  // @ts-ignore – JSDOM may not have a typed `localStorage` property yet.
   (globalThis as any).localStorage = new SimpleMemoryStorage();
-  // Also expose it as a global variable (the component uses the bare identifier)
-  // This mirrors what a real browser does: `localStorage` is a property of the global object.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (global as any).localStorage = (globalThis as any).localStorage;
+  (globalThis as any).localStorage = (globalThis as any).localStorage;
 });
 
 afterEach(() => {
-  // Reset the storage after each test to avoid cross‑test leakage.
   (globalThis as any).localStorage.clear();
+  // Reset mocks after each test to ensure isolation
+  vi.restoreAllMocks();
 });

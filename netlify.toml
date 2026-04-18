@@ -1,6 +1,6 @@
 [build]
   # Netlify will cd into this folder before executing the command
-  base    = "frontend"
+  base = "frontend"
 
   # Run the build script defined in frontend/package.json
   command = "npm run build --verbose"
@@ -12,9 +12,29 @@
   # Path is resolved relative to the `base` folder
   functions = "../netlify/functions"
 
-# Optional: expose environment variables to the build (already present in your logs)
+# Optional: expose environment variables to the build
 [build.environment]
-  # AUDIT_SECRET            = "$AUDIT_SECRET"
-  # VITE_API_URL           = "$VITE_API_URL"
+  # AUDIT_SECRET = "$AUDIT_SECRET"
+  # VITE_API_URL = "$VITE_API_URL"
   # VITE_AUDIT_LOG_ENDPOINT = "$VITE_AUDIT_LOG_ENDPOINT"
-  # GITHUB_WEBHOOK_SECRET = "$GITHUB_WEBHOOK_SECRET"  
+  # GITHUB_WEBHOOK_SECRET = "$GITHUB_WEBHOOK_SECRET"
+  NODE_VERSION = "18"
+
+# Production Security Headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Strict CSP for Production
+    # - 'self': Only allow resources from your own domain.
+    # - 'strict-dynamic': Allows scripts loaded by trusted scripts to load other scripts (crucial for Vite chunks).
+    # - 'unsafe-inline' REMOVED: Prevents XSS from injected scripts.
+    # - 'unsafe-eval' REMOVED: Prevents eval() attacks.
+    # - 'nonce-*' REMOVED: Not supported in static config without server-side generation.
+    # - blob: required for Web Workers.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    
+    # Additional Security Headers
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(), microphone=(), camera=()"

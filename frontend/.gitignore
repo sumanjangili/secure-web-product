@@ -1,3 +1,4 @@
+# frontend/.gitignore
 # Logs
 logs
 *.log
@@ -7,7 +8,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-ssr
 *.local
@@ -22,3 +26,26 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment variables (Critical for security)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Demo scripts (Prevent accidental commits of insecure code)
+scripts/*-demo.ts
+scripts/*-demo.js
+
+# Package artifacts
+*.tgz
+*.tar.gz
+
+# Test coverage
+coverage
+*.lcov
+.nyc_output
+
+# Vite specific
+*.map

@@ -1,69 +1,138 @@
+// frontend/src/lib/crypto.ts
+
 /**
- * Minimal client‑side crypto helper.
- * Uses the Web Crypto API (AES‑GCM) with a static demo key.
- * In production you would derive the key from a password or fetch it from a secure backend.
+ * Secure client-side crypto helper.
+ * Uses the Web Crypto API (AES-GCM) with PBKDF2 key derivation.
  */
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
-/* ------------------------------------------------------------------
-   Demo static key – DO NOT ship this in a real product!
-   Replace with a proper key‑derivation routine before going live.
-------------------------------------------------------------------- */
-const RAW_KEY = new Uint8Array([
-  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-  0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
-  0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
-]);
+// Constants for PBKDF2
+const PBKDF2_ITERATIONS = 100_000;
+const KEY_LENGTH = 32;
+
+// SAFETY CHECK: Ensure Web Crypto API is available
+const isCryptoAvailable = 
+  typeof crypto !== 'undefined' && 
+  crypto.subtle && 
+  typeof crypto.subtle.encrypt === 'function' &&
+  typeof crypto.subtle.decrypt === 'function' &&
+  typeof crypto.getRandomValues === 'function';
+
+if (!isCryptoAvailable) {
+  console.error("❌ Web Crypto API is NOT available in this browser.");
+  console.error("   This browser may not support client-side encryption.");
+  console.error("   Try using Chrome, Firefox, or Edge.");
+}
 
 /**
- * Import the raw key into a CryptoKey object (AES‑GCM, non‑extractable).
+ * Derives a cryptographic key from a password using PBKDF2.
  */
-async function getKey(): Promise<CryptoKey> {
-  return await crypto.subtle.importKey(
+async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+  if (!isCryptoAvailable) {
+    throw new Error("Web Crypto API is not available. Cannot derive key.");
+  }
+
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
     "raw",
-    RAW_KEY,
-    { name: "AES-GCM" },
+    enc.encode(password),
+    { name: "PBKDF2" },
     false,
-    ["encrypt", "decrypt"],
+    ["deriveBits", "deriveKey"]
+  );
+
+  return await crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt as BufferSource,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: KEY_LENGTH * 8 },
+    false,
+    ["encrypt", "decrypt"]
   );
 }
 
 /**
- * Encrypt a utf8 string and return a Base64‑encoded payload.
+ * Encrypt a utf8 string.
+ * Returns an object containing the ciphertext, salt, and IV as Base64 strings.
+ * These three components are required to decrypt the data later.
  */
-export async function encrypt(plainText: string): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await getKey();
+export async function encrypt(plainText: string, password: string): Promise<{ 
+  ciphertext: string; 
+  salt: string; 
+  iv: string 
+}> {
+  if (!isCryptoAvailable) {
+    throw new Error("Encryption failed: Web Crypto API unavailable in this browser.");
+  }
 
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    TEXT_ENCODER.encode(plainText),
-  );
+  try {
+    // Generate random salt and IV
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
 
-  // Concatenate IV + ciphertext, then Base64‑encode for transport
-  const combined = new Uint8Array(iv.byteLength + encrypted.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(encrypted), iv.byteLength);
-  return btoa(String.fromCharCode(...combined));
+    const key = await deriveKey(password, salt);
+
+    const encryptedBuffer = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      TEXT_ENCODER.encode(plainText),
+    );
+
+    // Convert ArrayBuffer to Uint8Array for Base64 conversion
+    const encryptedBytes = new Uint8Array(encryptedBuffer);
+
+    return {
+      ciphertext: btoa(String.fromCharCode(...encryptedBytes)),
+      salt: btoa(String.fromCharCode(...salt)),
+      iv: btoa(String.fromCharCode(...iv))
+    };
+  } catch (error) {
+    console.error("Encryption error:", error);
+    throw new Error("Encryption failed: " + (error instanceof Error ? error.message : "Unknown error"));
+  }
 }
 
 /**
- * Decrypt a Base64‑encoded payload produced by `encrypt`.
+ * Decrypt a Base64-encoded ciphertext using the provided salt and IV.
+ * All three components (ciphertext, salt, iv) are required.
  */
-export async function decrypt(base64Cipher: string): Promise<string> {
-  const data = Uint8Array.from(atob(base64Cipher), (c) => c.charCodeAt(0));
-  const iv = data.slice(0, 12);
-  const ciphertext = data.slice(12);
-  const key = await getKey();
+export async function decrypt(
+  ciphertextBase64: string, 
+  password: string, 
+  saltBase64: string, 
+  ivBase64: string
+): Promise<string> {
+  if (!isCryptoAvailable) {
+    throw new Error("Decryption failed: Web Crypto API unavailable in this browser.");
+  }
 
-  const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    key,
-    ciphertext,
-  );
+  try {
+    // Decode Base64 strings back to Uint8Array
+    const salt = Uint8Array.from(atob(saltBase64), (c) => c.charCodeAt(0));
+    const iv = Uint8Array.from(atob(ivBase64), (c) => c.charCodeAt(0));
+    const ciphertext = Uint8Array.from(atob(ciphertextBase64), (c) => c.charCodeAt(0));
 
-  return TEXT_DECODER.decode(decrypted);
+    const key = await deriveKey(password, salt);
+
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      ciphertext,
+    );
+
+    return TEXT_DECODER.decode(decryptedBuffer);
+  } catch (error) {
+    console.error("Decryption error:", error);
+    // FIX: Check error type before accessing .name property
+    if (error instanceof Error && error.name === 'OperationError') {
+      throw new Error("Decryption failed: Invalid password or corrupted data.");
+    }
+    throw new Error("Decryption failed: " + (error instanceof Error ? error.message : "Unknown error"));
+  }
 }
