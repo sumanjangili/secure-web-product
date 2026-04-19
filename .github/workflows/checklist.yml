@@ -1,4 +1,3 @@
-# .github/workflows/checklist.yml
 name: Update VERIFY_CHECKLIST
 
 on:
@@ -11,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false   # we’ll push later with a PAT
+          persist-credentials: false
 
       - name: Install deps
         run: npm ci
@@ -29,10 +28,24 @@ jobs:
 
       - name: Update checklist file
         run: |
-          # Replace the placeholders with x if the step succeeded
-          sed -i -e "s/- $$ $$ <!-- Lint & tests passed -->/- [x] <!-- Lint & tests passed -->/" VERIFY_CHECKLIST.md
+          # Ensure the file exists, otherwise create a basic one
+          if [ ! -f VERIFY_CHECKLIST.md ]; then
+            echo "VERIFY_CHECKLIST.md not found. Creating a basic template."
+            cat > VERIFY_CHECKLIST.md << 'EOF'
+# Verification & Smoke‑Test Checklist
+... (rest of your template content) ...
+EOF
+          fi
+
+          # Replace unchecked boxes with checked ones if steps succeeded
+          # Note: We use a simple string replacement for the markdown checkbox
+          
+          if [[ "${{ steps.lint_test.outcome }}" == "success" ]]; then
+            sed -i 's/- \[ \] <!-- Lint & tests passed -->/- [x] <!-- Lint & tests passed -->/' VERIFY_CHECKLIST.md
+          fi
+
           if [[ -z "$vulns_found" ]]; then
-            sed -i -e "s/- $$ $$ <!-- npm audit clean -->/- [x] <!-- npm audit clean -->/" VERIFY_CHECKLIST.md
+            sed -i 's/- \[ \] <!-- npm audit clean -->/- [x] <!-- npm audit clean -->/' VERIFY_CHECKLIST.md
           fi
 
       - name: Commit changes

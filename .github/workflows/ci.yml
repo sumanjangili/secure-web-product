@@ -38,10 +38,6 @@ jobs:
       - name: List installed packages
         run: npm ls --depth=0
         
-      #---------- Debug ----------
-      - name: List installed packages
-        run: npm ls --depth=0      
-
       # ---------- Lint ----------
       - name: Run ESLint
         run: npx eslint . --ext .ts,.tsx
@@ -70,9 +66,10 @@ jobs:
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
 
       # ---------- Security scan (CodeQL) ----------
-     # - name: Initialize CodeQL
-     #  uses: github/codeql-action/init@v2
-     #   with:
-     #      languages: javascript
-     #  - name: Perform CodeQL Analysis
-     #   uses: github/codeql-action/analyze@v2
+      # Uncomment if you want to enable CodeQL
+      # - name: Initialize CodeQL
+      #   uses: github/codeql-action/init@v2
+      #   with:
+      #     languages: javascript
+      # - name: Perform CodeQL Analysis
+      #   uses: github/codeql-action/analyze@v2
