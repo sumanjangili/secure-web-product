@@ -4,54 +4,86 @@
 
 # Node & npm
 node_modules/
-npm-debug.log
+netlify/functions/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# Vite / build artefacts
+# Build artifacts & caches
 dist/
 .vite/
+.cache/
 *.local
+*.tsbuildinfo
 
-# OS / editor artefacts
+# OS / Editor artifacts
 .DS_Store
 Thumbs.db
+.Spotlight-V100
+.Trashes
 .idea/
+*.swp
+*.swo
+*~
 .vscode/
+!.vscode/extensions.json  # Optional: Allow shared extension recommendations
+!.vscode/tasks.json       # Optional: Allow shared tasks
 
-# Environment files (CRITICAL - never commit secrets)
+# Environment files (CRITICAL - NEVER commit secrets)
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .env.*.local
+*.log
 
-# Test coverage reports
+# Test coverage
 coverage/
 *.lcov
-.nyc_output
+.nyc_output/
 
-# Package artifacts (avoid committing binaries)
+# Package artifacts (binaries & archives)
 *.tgz
 *.tar.gz
 *.zip
+*.node
+*.so
+*.dll
 
-# Netlify function bundles (source files OK, bundles ignored)
-netlify/functions/*.bundle.js
+# Netlify specific
 .netlify/
+netlify/functions/*.bundle.js
+netlify/functions/*.zip
+# Ignore the build cache directory
+.netlify-build/
 
 # =============================================================================
-# EXCEPTIONS - Keep these tracked
+# DOCUMENTATION & SOURCE (KEEP TRACKED)
 # =============================================================================
 
-# Netlify function source files (not bundles)
-!netlify/functions/audit_log.js
-!netlify/functions/github-webhook.js
+# Ensure all source code is tracked (Default behavior, but explicit for clarity)
+# No negation rules needed here unless you have specific folders to ignore.
 
-# Documentation source files
+# =============================================================================
+# EXCLUSIONS (What NOT to ignore)
+# =============================================================================
+
+# If you have a specific .gitignore in subfolders that ignores too much,
+# you can override here, but generally, root ignores are sufficient.
+
+# Ensure package.json and lockfiles are tracked
+!package.json
+!package-lock.json
+!npm-shrinkwrap.json
+!yarn.lock
+!pnpm-lock.yaml
+
+# Ensure Netlify config is tracked
+!netlify.toml
+!netlify/
+
+# Ensure docs are tracked
+!docs/
 !docs/*.md
-!docs/**/*.md
-
-# =============================================================================
-# DEMO SCRIPTS - Prevent accidental commits
-# =============================================================================
-
-# Demo scripts in frontend (if they exist at root)
-scripts/*-demo.ts
-scripts/*-demo.js

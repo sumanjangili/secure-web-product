@@ -1,0 +1,13 @@
+{
+  "name": "secure-web-functions",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@upstash/redis": "^1.37.0",
+    "argon2": "^0.44.0",
+    "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.3",
+    "otplib": "^13.4.0",
+    "pg": "^8.20.0"
+  }
+}

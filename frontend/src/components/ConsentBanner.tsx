@@ -1,34 +1,79 @@
-// src/components/ConsentBanner.tsx
-
+// frontend/src/components/ConsentBanner.tsx
 import React, { useState, useEffect } from "react";
-import { encrypt, decrypt } from "../lib/crypto";
+import { encrypt } from "../lib/crypto";
+import { ConsentManager } from "../lib/consent-manager";
 
-/**
- * Simple cookie‑style consent banner.
- * Stores the decision in localStorage (encrypted via lib/crypto.ts).
- */
-const ConsentBanner: React.FC = () => {
+interface ConsentBannerProps {
+  userSessionKey?: string; // The JWT or session token
+}
+
+interface ConsentData {
+  essential: boolean;
+  analytics: boolean;
+  timestamp: string;
+  version: string;
+}
+
+const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [analyticsConsent, setAnalyticsConsent] = useState(false);
 
   useEffect(() => {
-    // Check if consent already stored
-    const stored = localStorage.getItem("consent");
-    if (!stored) setVisible(true);
-  }, []);
+    const checkConsent = async () => {
+      const stored = localStorage.getItem("consent");
+      
+      if (!stored) {
+        setVisible(true);
+        return;
+      }
 
-  const handleAccept = async () => {
+      if (!userSessionKey) {
+        setVisible(true);
+        return;
+      }
+
+      try {
+        const consent = await ConsentManager.getConsent(userSessionKey);
+        if (consent) {
+          setVisible(false);
+        } else {
+          setVisible(true);
+        }
+      } catch (error) {
+        console.error("Consent check failed:", error);
+        setVisible(true);
+      }
+    };
+
+    checkConsent();
+  }, [userSessionKey]);
+
+  const handleSaveConsent = async (acceptAnalytics: boolean) => {
     setLoading(true);
     setErrorMessage(null);
+
+    if (!userSessionKey) {
+      setErrorMessage("Authentication required to save consent.");
+      setLoading(false);
+      return;
+    }
+
     try {
-      // SECURITY NOTE: 
-      // In production, derive this key from a user session or a secure password.
-      const DEMO_PASSWORD = "demo-consent-key-change-me"; 
+      const consentData: ConsentData = {
+        essential: true,
+        analytics: acceptAnalytics,
+        timestamp: new Date().toISOString(),
+        version: "1.0",
+      };
+
+      // Encrypt using the JWT string directly as the password/key material
+      const encrypted = await encrypt(JSON.stringify(consentData), userSessionKey);
       
-      // FIX: encrypt returns an object, serialize to JSON for localStorage
-      const encrypted = await encrypt("accepted", DEMO_PASSWORD);
       localStorage.setItem("consent", JSON.stringify(encrypted));
+      
+      ConsentManager.notifyConsentUpdated();
       setVisible(false);
     } catch (error) {
       setErrorMessage("Could not save consent. Please try again.");
@@ -39,7 +84,7 @@ const ConsentBanner: React.FC = () => {
   };
 
   const handleDismiss = () => {
-    setVisible(false);
+    handleSaveConsent(false);
   };
 
   if (!visible) return null;
@@ -48,46 +93,81 @@ const ConsentBanner: React.FC = () => {
     <section
       style={{
         background: "#f0f4ff",
-        padding: "1rem",
-        borderRadius: "4px",
+        padding: "1.5rem",
+        borderRadius: "8px",
         position: "fixed",
         bottom: "1rem",
         left: "1rem",
         right: "1rem",
         maxWidth: "600px",
         margin: "auto",
-        boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
         zIndex: 9999,
+        border: "1px solid #dbeafe",
       }}
     >
-      <p>
-        We use cookies to improve your experience. By continuing you accept our
-        privacy policy.
+      <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.1rem" }}>Cookie Preferences</h3>
+      <p style={{ margin: "0 0 1rem 0", fontSize: "0.95rem", lineHeight: "1.4" }}>
+        We use cookies to enhance your experience. 
+        <strong>Essential cookies</strong> are required. 
+        <strong>Analytics cookies</strong> are optional.
       </p>
-      
+
       {errorMessage && (
         <p style={{ color: "#d32f2f", fontSize: "0.9rem", margin: "0.5rem 0" }}>
           {errorMessage}
         </p>
       )}
 
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1rem" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "default" }}>
+          <input type="checkbox" checked disabled style={{ accentColor: "#2563eb" }} />
+          <span style={{ fontWeight: 500 }}>Essential Cookies (Required)</span>
+        </label>
+
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+          <input 
+            type="checkbox" 
+            id="analytics-consent"
+            checked={analyticsConsent}
+            onChange={(e) => setAnalyticsConsent(e.target.checked)}
+            style={{ accentColor: "#2563eb" }}
+          />
+          <span>Analytics & Performance Cookies</span>
+        </label>
+      </div>
+
+      <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
         <button 
-          onClick={handleAccept} 
+          onClick={handleDismiss}
           disabled={loading}
-          style={{ 
-            marginRight: "0.5rem", 
+          style={{
+            padding: "0.5rem 1rem",
+            backgroundColor: "transparent",
+            border: "1px solid #cbd5e1",
+            borderRadius: "4px",
             cursor: loading ? "not-allowed" : "pointer",
+            color: "#475569",
+            fontWeight: 500
+          }}
+        >
+          Reject Non-Essential
+        </button>
+        <button 
+          onClick={() => handleSaveConsent(true)}
+          disabled={loading}
+          style={{
+            padding: "0.5rem 1rem",
+            backgroundColor: loading ? "#93c5fd" : "#2563eb",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: loading ? "not-allowed" : "pointer",
+            fontWeight: 600,
             opacity: loading ? 0.7 : 1
           }}
         >
-          {loading ? "Saving..." : "Accept"}
-        </button>
-        <button 
-          onClick={handleDismiss}
-          style={{ cursor: "pointer" }}
-        >
-          Dismiss
+          {loading ? "Saving..." : "Accept All"}
         </button>
       </div>
     </section>

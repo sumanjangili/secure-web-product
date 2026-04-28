@@ -1,40 +1,52 @@
+# netlify.toml
 [build]
-  # Netlify will cd into this folder before executing the command
+  # Frontend Build Configuration
   base = "frontend"
-
-  # Run the build script defined in frontend/package.json
-  command = "npm run build --verbose"
-
-  # The folder that contains the compiled assets (relative to `base`)
+  command = "npm run build"
   publish = "dist"
-
-  # Where Netlify should look for serverless functions
-  # Path is resolved relative to the `base` folder
+  
+  # Functions Configuration (Relative to 'base' folder)
   functions = "../netlify/functions"
 
-# Optional: expose environment variables to the build
 [build.environment]
-  # AUDIT_SECRET = "$AUDIT_SECRET"
-  # VITE_API_URL = "$VITE_API_URL"
-  # VITE_AUDIT_LOG_ENDPOINT = "$VITE_AUDIT_LOG_ENDPOINT"
-  # GITHUB_WEBHOOK_SECRET = "$GITHUB_WEBHOOK_SECRET"
-  NODE_VERSION = "18"
+  NODE_VERSION = "20"
+  NETLIFY_USE_YARN = "false"
 
-# Production Security Headers
+[dev]
+  # Frontend Dev Server
+  framework = "vite"
+  port = 8888
+  targetPort = 5173
+  autoLaunch = false
+  
+  # NOTE: Do NOT set 'functions' here if running 'netlify functions:serve' manually.
+  # Manual separation prevents port conflicts and allows independent debugging.
+
+[functions]
+  # Global Functions Configuration
+  directory = "../netlify/functions"
+  node_bundler = "esbuild"
+  
+  # CRITICAL: Only exclude NATIVE modules. 
+  # @upstash/redis is pure JS and should be bundled.
+  # ioredis is removed because we are switching to @upstash/redis.
+  external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib"]
+  
+  # Ensure the Upstash SDK and local lib helpers are included in the bundle
+  included_files = ["../netlify/functions/lib/**", "../netlify/functions/node_modules/@upstash/**"]
+
+[[redirects]]
+  # SPA Fallback (Must be last)
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
 [[headers]]
   for = "/*"
   [headers.values]
-    # Strict CSP for Production
-    # - 'self': Only allow resources from your own domain.
-    # - 'strict-dynamic': Allows scripts loaded by trusted scripts to load other scripts (crucial for Vite chunks).
-    # - 'unsafe-inline' REMOVED: Prevents XSS from injected scripts.
-    # - 'unsafe-eval' REMOVED: Prevents eval() attacks.
-    # - 'nonce-*' REMOVED: Not supported in static config without server-side generation.
-    # - blob: required for Web Workers.
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
-    
-    # Additional Security Headers
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "geolocation=(), microphone=(), camera=()"
+    # Uncomment for local dev if you get CORS errors from browser
+    # Access-Control-Allow-Origin = "*"

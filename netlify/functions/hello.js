@@ -11,31 +11,39 @@
  */
 
 exports.handler = async (event, context) => {
-  // -------------------------------------------------
-  // Enforce GET method (optional, but good practice)
-  // -------------------------------------------------
-  if (event.httpMethod !== 'GET') {
-    return { 
-      statusCode: 405, 
-      body: JSON.stringify({ error: 'Method Not Allowed' }) 
+  try {
+    // -------------------------------------------------
+    // Enforce GET method (optional, but good practice)
+    // -------------------------------------------------
+    if (event.httpMethod !== 'GET') {
+      return { 
+        statusCode: 405, 
+        body: JSON.stringify({ error: 'Method Not Allowed' }) 
+      };
+    }
+
+    // -------------------------------------------------
+    // Health check response
+    // -------------------------------------------------
+    return {
+      statusCode: 200,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'X-Content-Type-Options': 'nosniff'
+      },
+      body: JSON.stringify({
+        message: '👋 Hello from Netlify!',
+        timestamp: new Date().toISOString(),
+        status: 'healthy'
+      })
+    };
+
+  } catch (error) {
+    console.error('[Hello] Error:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Health check failed' })
     };
   }
-
-  // -------------------------------------------------
-  // Health check response
-  // -------------------------------------------------
-  return {
-    statusCode: 200,
-    headers: { 
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'X-Content-Type-Options': 'nosniff'
-    },
-    body: JSON.stringify({
-      message: '👋 Hello from Netlify!',
-      timestamp: new Date().toISOString(),
-      environment: process.env.CONTEXT || 'production',
-      function: 'hello'
-    })
-  };
 };

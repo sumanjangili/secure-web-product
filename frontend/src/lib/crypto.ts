@@ -2,17 +2,24 @@
 
 /**
  * Secure client-side crypto helper.
- * Uses the Web Crypto API (AES-GCM) with PBKDF2 key derivation.
+ * Uses the Web Crypto API (AES-GCM) with adaptive key derivation.
+ * 
+ * Algorithm: AES-GCM (256-bit)
+ * Key Derivation: 
+ *   - PBKDF2 (SHA-256, 100k iterations) for User Passwords
+ *   - SHA-256 (Single pass) for JWT Tokens (Session Keys)
  */
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
-// Constants for PBKDF2
+// Constants
 const PBKDF2_ITERATIONS = 100_000;
-const KEY_LENGTH = 32;
+const KEY_LENGTH_BITS = 256; // 32 bytes
+const SALT_LENGTH = 16; // 128 bits
+const IV_LENGTH = 12; // 96 bits (standard for GCM)
 
-// SAFETY CHECK: Ensure Web Crypto API is available
+// Safety Check
 const isCryptoAvailable = 
   typeof crypto !== 'undefined' && 
   crypto.subtle && 
@@ -21,23 +28,21 @@ const isCryptoAvailable =
   typeof crypto.getRandomValues === 'function';
 
 if (!isCryptoAvailable) {
-  console.error("❌ Web Crypto API is NOT available in this browser.");
-  console.error("   This browser may not support client-side encryption.");
-  console.error("   Try using Chrome, Firefox, or Edge.");
+  console.warn("⚠️ Web Crypto API is not available. Encryption features will be disabled.");
 }
 
 /**
  * Derives a cryptographic key from a password using PBKDF2.
+ * Used for user-provided passwords (high entropy, slow derivation).
  */
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promise<CryptoKey> {
   if (!isCryptoAvailable) {
-    throw new Error("Web Crypto API is not available. Cannot derive key.");
+    throw new Error("Web Crypto API is not available.");
   }
 
-  const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
-    enc.encode(password),
+    TEXT_ENCODER.encode(password),
     { name: "PBKDF2" },
     false,
     ["deriveBits", "deriveKey"]
@@ -51,88 +56,146 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
       hash: "SHA-256",
     },
     keyMaterial,
-    { name: "AES-GCM", length: KEY_LENGTH * 8 },
+    { name: "AES-GCM", length: KEY_LENGTH_BITS },
     false,
     ["encrypt", "decrypt"]
   );
 }
 
 /**
- * Encrypt a utf8 string.
- * Returns an object containing the ciphertext, salt, and IV as Base64 strings.
- * These three components are required to decrypt the data later.
+ * Derives a key from a JWT Token using SHA-256.
+ * Used for session keys (already random, fast derivation).
  */
-export async function encrypt(plainText: string, password: string): Promise<{ 
+async function deriveKeyFromToken(token: string): Promise<CryptoKey> {
+  if (!isCryptoAvailable) {
+    throw new Error("Web Crypto API is not available.");
+  }
+
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  
+  // Hash the token using SHA-256
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  
+  // Import the hash as a raw key for AES-GCM
+  return await crypto.subtle.importKey(
+    "raw",
+    hashBuffer,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+/**
+ * Smart Key Derivation: Detects if input is a JWT or Password.
+ * - JWTs contain '.' (header.payload.signature)
+ * - Passwords do not.
+ */
+async function deriveKey(keyMaterial: string, salt?: Uint8Array): Promise<CryptoKey> {
+  // Heuristic: If it contains dots, assume it's a JWT
+  if (keyMaterial.includes('.')) {
+    return deriveKeyFromToken(keyMaterial);
+  }
+  
+  // Otherwise, assume it's a password
+  if (!salt) {
+    throw new Error("Salt is required for password-based key derivation.");
+  }
+  return deriveKeyFromPassword(keyMaterial, salt);
+}
+
+/**
+ * Encrypt a UTF-8 string.
+ * Returns { ciphertext, salt, iv } as Base64 strings.
+ */
+export async function encrypt(plainText: string, keyMaterial: string): Promise<{ 
   ciphertext: string; 
   salt: string; 
   iv: string 
 }> {
   if (!isCryptoAvailable) {
-    throw new Error("Encryption failed: Web Crypto API unavailable in this browser.");
+    throw new Error("Encryption failed: Web Crypto API unavailable.");
   }
 
   try {
-    // Generate random salt and IV
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
 
-    const key = await deriveKey(password, salt);
+    // Smart derivation
+    const key = await deriveKey(keyMaterial, salt);
 
     const encryptedBuffer = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
+      { name: "AES-GCM", iv: iv as BufferSource },
       key,
-      TEXT_ENCODER.encode(plainText),
+      TEXT_ENCODER.encode(plainText)
     );
 
-    // Convert ArrayBuffer to Uint8Array for Base64 conversion
-    const encryptedBytes = new Uint8Array(encryptedBuffer);
-
     return {
-      ciphertext: btoa(String.fromCharCode(...encryptedBytes)),
-      salt: btoa(String.fromCharCode(...salt)),
-      iv: btoa(String.fromCharCode(...iv))
+      ciphertext: bufferToBase64(encryptedBuffer),
+      salt: bufferToBase64(salt),
+      iv: bufferToBase64(iv)
     };
   } catch (error) {
     console.error("Encryption error:", error);
-    throw new Error("Encryption failed: " + (error instanceof Error ? error.message : "Unknown error"));
+    throw new Error("Encryption failed.");
   }
 }
 
 /**
- * Decrypt a Base64-encoded ciphertext using the provided salt and IV.
- * All three components (ciphertext, salt, iv) are required.
+ * Decrypt a Base64-encoded ciphertext.
  */
 export async function decrypt(
   ciphertextBase64: string, 
-  password: string, 
+  keyMaterial: string, 
   saltBase64: string, 
   ivBase64: string
 ): Promise<string> {
   if (!isCryptoAvailable) {
-    throw new Error("Decryption failed: Web Crypto API unavailable in this browser.");
+    throw new Error("Decryption failed: Web Crypto API unavailable.");
   }
 
   try {
-    // Decode Base64 strings back to Uint8Array
-    const salt = Uint8Array.from(atob(saltBase64), (c) => c.charCodeAt(0));
-    const iv = Uint8Array.from(atob(ivBase64), (c) => c.charCodeAt(0));
-    const ciphertext = Uint8Array.from(atob(ciphertextBase64), (c) => c.charCodeAt(0));
+    const salt = base64ToBuffer(saltBase64);
+    const iv = base64ToBuffer(ivBase64);
+    const ciphertext = base64ToBuffer(ciphertextBase64);
 
-    const key = await deriveKey(password, salt);
+    // Smart derivation (salt is ignored for JWTs, but passed for type safety)
+    const key = await deriveKey(keyMaterial, salt);
 
     const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
+      { name: "AES-GCM", iv: iv as BufferSource },
       key,
-      ciphertext,
+      ciphertext as BufferSource
     );
 
     return TEXT_DECODER.decode(decryptedBuffer);
   } catch (error) {
-    console.error("Decryption error:", error);
-    // FIX: Check error type before accessing .name property
+    // Check for specific decryption failure (wrong key or corrupted data)
     if (error instanceof Error && error.name === 'OperationError') {
-      throw new Error("Decryption failed: Invalid password or corrupted data.");
+      throw new Error("Decryption failed: Invalid key or corrupted data.");
     }
-    throw new Error("Decryption failed: " + (error instanceof Error ? error.message : "Unknown error"));
+    console.error("Decryption error:", error);
+    throw new Error("Decryption failed.");
   }
+}
+
+// --- Helper Functions ---
+
+function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToBuffer(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }

@@ -1,0 +1,52 @@
+{
+  "name": "@sumanjangili/secure-web-product",
+  "version": "1.0.0",
+  "description": "Secure web product with MFA, rate limiting, and encrypted data storage.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "functions": "netlify/functions"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "validate": "node scripts/validate-env.js",
+    "start": "npm run validate && netlify dev",
+    "dev": "concurrently \"npm run dev:functions\" \"npm run dev:frontend\"",
+    "dev:functions": "netlify functions:serve",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": [
+    "security",
+    "mfa",
+    "encryption",
+    "netlify",
+    "postgres"
+  ],
+  "author": "Suman Jangili",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sumanjangili/secure-web-product.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sumanjangili/secure-web-product/issues"
+  },
+  "homepage": "https://github.com/sumanjangili/secure-web-product",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.37.0",
+    "argon2": "^0.44.0",
+    "dotenv": "^17.4.2",
+    "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.3",
+    "otplib": "^13.4.0",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "netlify-cli": "^17.38.1"
+  }
+}

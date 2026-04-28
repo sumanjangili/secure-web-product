@@ -7,7 +7,7 @@ const distPath = path.resolve(__dirname, '../dist');
 const indexPath = path.join(distPath, 'index.html');
 const headersPath = path.join(distPath, '_headers');
 
-// 1. Generate a random nonce (base64 encoded)
+// 1. Generate a random nonce (base64 encoded) - DO NOT HARDCODE
 const nonce = crypto.randomBytes(16).toString('base64');
 console.log(`🔐 Generated Nonce: ${nonce}`);
 
@@ -18,12 +18,10 @@ if (!fs.existsSync(indexPath)) {
 
 let html = fs.readFileSync(indexPath, 'utf-8');
 
-// 2. Inject nonce into ALL script tags (not just type="module")
-// This handles Vite's chunk splitting which may create multiple script tags
+// 2. Inject nonce into ALL script tags
 html = html.replace(
   /(<script[^>]*)(src="[^"]*"[^>]*)(>)/g,
   (match, before, srcAttr, after) => {
-    // Skip if nonce already exists
     if (match.includes('nonce=')) return match;
     return `${before} nonce="${nonce}"${srcAttr}${after}`;
   }
@@ -40,7 +38,16 @@ fs.writeFileSync(indexPath, html);
 console.log('✅ Updated index.html with nonce.');
 
 // 5. Generate the _headers file for Netlify
-const cspHeader = `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';`;
+// Relaxed CSP to allow inline styles and data URIs
+const cspHeader = `default-src 'self'; 
+script-src 'self' 'nonce-${nonce}' 'strict-dynamic'; 
+style-src 'self' 'unsafe-inline'; 
+img-src 'self' data: blob:; 
+font-src 'self'; 
+connect-src 'self' https://api.qrserver.com; 
+frame-ancestors 'none'; 
+base-uri 'self'; 
+form-action 'self'`;
 
 const headersContent = `
 /*
@@ -51,5 +58,11 @@ const headersContent = `
   Permissions-Policy: geolocation=(), microphone=(), camera=()
 `;
 
+// Create dist folder if it doesn't exist
+if (!fs.existsSync(path.dirname(headersPath))) {
+  fs.mkdirSync(path.dirname(headersPath), { recursive: true });
+}
+
 fs.writeFileSync(headersPath, headersContent);
 console.log(`✅ Generated _headers file with CSP.`);
+console.log(`📋 CSP Header: ${cspHeader}`);

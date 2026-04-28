@@ -1,28 +1,16 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CSP Meta Tag (Injected by your build script) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'nonce-PLACEHOLDER' 'strict-dynamic'; ...">
     <title>Secure Web Product</title>
-    
-    <!-- 
-      PRODUCTION CSP TEMPLATE:
-      - The build script will replace 'nonce-PLACEHOLDER' with a real random nonce.
-      - 'strict-dynamic' allows the script loaded via nonce to load other scripts (chunks).
-      - 'self' restricts resources to your domain.
-    -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'nonce-PLACEHOLDER' 'strict-dynamic'; style-src 'self'; img-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
-    />
   </head>
   <body>
+    <!-- This ID MUST match the one in main.tsx -->
     <div id="root"></div>
-    
-    <!-- 
-      The build script will inject the 'nonce' attribute here automatically.
-      Do NOT put a placeholder value here; the script adds it.
-    -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
