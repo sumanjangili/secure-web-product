@@ -30,6 +30,14 @@ Thumbs.db
 !.vscode/extensions.json  # Optional: Allow shared extension recommendations
 !.vscode/tasks.json       # Optional: Allow shared tasks
 
+# Database dumps and seeds
+*.sql
+!schema.sql.template  # Optional: if you have a template without data
+schema.sql
+backup.sql
+data.sql
+.env
+
 # Environment files (CRITICAL - NEVER commit secrets)
 .env
 .env.local
