@@ -17,14 +17,15 @@ This repository serves as both a **functional secure application** and a **produ
 
 1. [Core Features](#core-features)
 2. [Getting Started Locally](#getting-started-locally)
-3. [Deploying to Netlify](#deploying-to-netlify)
-4. [CI & Security Pipeline](#ci--security-pipeline)
-5. [Product Management Documents](#product-management-documents)
-6. [Testing Locally](#testing-locally)
-7. [Extending the Template](#extending-the-template)
-8. [Verification Checklist](#verification-checklist)
-9. [Contributing](#contributing)
-10. [License](#license)
+3. [Scripts](#scripts)
+4. [Deploying to Netlify](#deploying-to-netlify)
+5. [CI & Security Pipeline](#ci--security-pipeline)
+6. [Product Management Documents](#product-management-documents)
+7. [Testing Locally](#testing-locally)
+8. [Extending the Template](#extending-the-template)
+9. [Verification Checklist](#verification-checklist)
+10. [Contributing](#contributing)
+11. [License](#license)
 
 ---
 
@@ -56,7 +57,7 @@ This repository serves as both a **functional secure application** and a **produ
 - **UserSettings**: Manage MFA, regenerate backup codes, and account erasure.
 
 5. Product Management Hub
-- Includes version-controlled documentation artifacts (docs/) for roadmaps, reg$
+- Includes version-controlled documentation artifacts (docs/) for roadmaps, regulatory matrices, stakeholder maps, privacy policies, dpia reports and risk register.
 - Scripts to auto-generate documentation from source code.
 
 > 💡 **Tip**: A quick-reference checklist is provided in [`VERIFY_CHECKLIST.md`](VERIFY_CHECKLIST.md). It covers repository sanity, CI validation, dependency hygiene, security verification, and smoke-test steps. Teams are encouraged to run through it before any release.
@@ -101,6 +102,26 @@ Terminal 2: Backend (Netlify Functions)
 netlify functions:serve
 # Runs on http://localhost:9999
 ```
+
+---
+
+### Scripts
+#### Frontend (cd frontend)
+| Command | Description |
+| :--- | :--- |
+| npm run dev | Starts the Vite dev server (http://localhost:5173). |
+| npm run build | Builds the production bundle and generates CSP headers. |
+| npm run preview | Locally previews the production build. |
+| npm run lint | Runs ESLint to check code quality. |
+| npm run lint:fix | Automatically fixes linting errors. |
+| npm run type-check | Verifies TypeScript types (tsc --noEmit). |
+| npm run test | Runs unit tests with Vitest. |
+| npm run test:coverage | Runs tests with coverage report. |
+| npm run format | Formats code with Prettier. |
+| npm run audit | Runs npm audit to check for vulnerabilities. |
+#### Backend (cd netlify/functions)
+| netlify functions:serve | Start local functions server (http://localhost:9999) |
+| npm run build | (Optional) Pre-bundle functions if needed |
 
 ---
 
@@ -221,13 +242,13 @@ This project is released under the **MIT License** – feel free to fork, modify
 ---
 
 #### 📝 Key Corrections Made
-1.  **Removed `libsodium`**: Replaced with **Native Web Crypto API** (AES-GCM + PBKDF2) as per your actual `crypto.ts` implementation.
-2.  **Removed Key Generation Script**: The old `libsodium` key pair generation is irrelevant for your symmetric encryption flow.
+1.  **Removed `libsodium`**: Replaced with **Native Web Crypto API** (AES-GCM + PBKDF2) as per actual `crypto.ts` implementation.
+2.  **Removed Key Generation Script**: The old `libsodium` key pair generation is irrelevant for symmetric encryption flow.
 3.  **Updated Tech Stack**: Explicitly mentions **PostgreSQL**, **Argon2**, **JWT**, and **Upstash Redis**.
-4.  **Corrected Local Dev Steps**: Added the dual-terminal requirement (`netlify functions:serve` + `npm run dev`) which is critical for your setup.
-5.  **Updated Environment Variables**: Added `JWT_SECRET`, `DATABASE_URL`, and `AUDIT_SECRET` which are essential for your functions.
+4.  **Corrected Local Dev Steps**: Added the dual-terminal requirement (`netlify functions:serve` + `npm run dev`) which is critical for our setup.
+5.  **Updated Environment Variables**: Added `JWT_SECRET`, `DATABASE_URL`, and `AUDIT_SECRET` which are essential for functions.
 6.  **Aligned Features**: Updated the feature list to include **MFA**, **Backup Codes**, and **Account Erasure**.
-7.  **Fixed Project Structure**: Listed the actual files you created (`MFASetup.tsx`, `redis.js`, etc.).
+7.  **Fixed Project Structure**: Listed the actual files created (`MFASetup.tsx`, `redis.js`, etc.).
 
 This README now accurately reflects **production-ready, secure, and functional** system.
 
