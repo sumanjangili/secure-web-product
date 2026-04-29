@@ -1,6 +1,6 @@
 {
   "name": "@sumanjangili/secure-web-product",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "A privacy-first audit-logging solution with React frontend and Netlify serverless functions.",
