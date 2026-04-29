@@ -27,8 +27,9 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
-          cache: npm
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
       # ---------- Install deps ----------
       - name: Install dependencies
@@ -40,19 +41,24 @@ jobs:
         
       # ---------- Lint ----------
       - name: Run ESLint
-        run: npx eslint . --ext .ts,.tsx
+        run: npm run lint
 
       # ---------- Type checking ----------
       - name: Run TypeScript compiler
-        run: npx tsc --noEmit
+        run: npm run type-check
 
       # ---------- Unit tests ----------
       - name: Run Vitest
-        run: npx vitest run --coverage
+        run: npm run test
 
       # ---------- Build ----------
       - name: Build production bundle
-        run: npm run build --verbose
+        run: npm run build
+
+      # ---------- Security Audit ----------
+      - name: Run Security Audit
+        run: npm audit --production --audit-level=high
+        continue-on-error: true
 
       # ---------- Optional: Deploy preview ----------
       - name: Deploy to Netlify (preview)
@@ -65,8 +71,7 @@ jobs:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
 
-      # ---------- Security scan (CodeQL) ----------
-      # Uncomment if you want to enable CodeQL
+      # ---------- Optional: CodeQL (Uncomment to enable) ----------
       # - name: Initialize CodeQL
       #   uses: github/codeql-action/init@v2
       #   with:
