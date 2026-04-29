@@ -19,23 +19,21 @@
   targetPort = 5173
   autoLaunch = false
 
-  # Ensure function dependencies are installed
+# Ensure function dependencies are installed
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
-  
-  # NOTE: Do NOT set 'functions' here if running 'netlify functions:serve' manually.
-  # Manual separation prevents port conflicts and allows independent debugging.
 
 [functions]
   # Global Functions Configuration
   directory = "../netlify/functions"
   node_bundler = "esbuild"
-  external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib", "@upstash/redis"]
   
-  # CRITICAL: Only exclude NATIVE modules. 
-  # @upstash/redis is pure JS and should be bundled.
-  # ioredis is removed because we are switching to @upstash/redis.
-  external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib"]
+  # Combined list of external modules. 
+  # Note: @upstash/redis is pure JS. If you moved it to root package.json, 
+  # you can keep it here to ensure esbuild handles it correctly, 
+  # or remove it if you want esbuild to bundle it entirely.
+  # Based on your previous error, we keep it here to prevent bundling issues.
+  external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib", "@upstash/redis"]
   
   # Ensure the Upstash SDK and local lib helpers are included in the bundle
   included_files = ["../netlify/functions/lib/**", "../netlify/functions/node_modules/@upstash/**"]
