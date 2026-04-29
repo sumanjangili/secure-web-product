@@ -7,7 +7,7 @@ const distPath = path.resolve(__dirname, '../dist');
 const indexPath = path.join(distPath, 'index.html');
 const headersPath = path.join(distPath, '_headers');
 
-// 1. Generate a random nonce (base64 encoded) - DO NOT HARDCODE
+// 1. Generate a random nonce (base64 encoded)
 const nonce = crypto.randomBytes(16).toString('base64');
 console.log(`🔐 Generated Nonce: ${nonce}`);
 
@@ -27,7 +27,7 @@ html = html.replace(
   }
 );
 
-// 3. Update the CSP meta tag content - replace PLACEHOLDER with actual nonce
+// 3. Update the CSP meta tag content
 html = html.replace(
   /'nonce-PLACEHOLDER'/g,
   `'nonce-${nonce}'`
@@ -38,7 +38,7 @@ fs.writeFileSync(indexPath, html);
 console.log('✅ Updated index.html with nonce.');
 
 // 5. Generate the _headers file for Netlify
-// Relaxed CSP to allow inline styles and data URIs
+// Using STRICT straight quotes (')
 const cspHeader = `default-src 'self'; 
 script-src 'self' 'nonce-${nonce}' 'strict-dynamic'; 
 style-src 'self' 'unsafe-inline'; 
