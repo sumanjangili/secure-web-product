@@ -27,12 +27,15 @@ dist-ssr
 *.sln
 *.sw?
 
-# Environment variables (Critical for security)
+# Environment variables (CRITICAL: Never commit secrets)
 .env
 .env.local
+.env.*.local
 .env.development.local
 .env.test.local
 .env.production.local
+# Also ignore the production file if you manage secrets in Netlify UI
+.env.production
 
 # Demo scripts (Prevent accidental commits of insecure code)
 scripts/*-demo.ts
@@ -49,3 +52,8 @@ coverage
 
 # Vite specific
 *.map
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
