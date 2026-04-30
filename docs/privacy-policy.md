@@ -28,7 +28,8 @@ While we cannot read your encrypted content, we process the following metadata a
 - **IP Addresses:** Logged temporarily for rate-limiting and security monitoring (retained for 30 days).
 
 ### C. Consent Preferences
-- **Cookie Consent:** Your choices regarding analytics cookies are stored locally in an encrypted format. We do not track you unless you explicitly opt-in.
+- **Local Storage:** Your cookie consent choices (Essential vs. Analytics) are stored locally in your browser as a **plain JSON flag** for immediate user experience (UX) responsiveness. This local flag is not considered sensitive personal data.
+- **Server Record:** Your official consent preference is simultaneously transmitted to our servers, where it is **encrypted** and stored immutably as part of your audit trail. This ensures a verifiable, tamper-proof record of your consent.
 
 ## 4. How We Use Your Data
 - **Service Delivery:** To encrypt, store, and allow you to retrieve your data.
@@ -40,13 +41,14 @@ While we cannot read your encrypted content, we process the following metadata a
 - **User Data:** Retained indefinitely until you request deletion or close your account. Because we cannot decrypt it, we cannot selectively delete parts of your data; deletion removes the entire encrypted blob.
 - **Audit Logs:** Retained for **12 months** for security auditing, then anonymized.
 - **Session Tokens:** Expire automatically after 24 hours of inactivity.
+- **Consent Records:** Retained as long as your account is active to demonstrate compliance with your choices.
 
 ## 6. Your Rights (GDPR & CCPA)
 You have the following rights regarding your data:
 - **Right to Access:** You can view your encrypted data via your dashboard. (Note: You must decrypt it locally).
 - **Right to Rectification:** Update your profile information.
-- **Right to Erasure (Delete):** You can permanently delete your account and all associated data via the **User Settings** page. This action is irreversible.
-- **Right to Opt-Out:** You can reject non-essential cookies at any time via the **Consent Banner**.
+- **Right to Erasure (Delete):** You can permanently delete your account and all associated data via the **User Settings** page. This action is irreversible and removes both the local flag and the server record.
+- **Right to Opt-Out:** You can reject non-essential cookies at any time via the **Consent Banner**. This updates both your local flag and the encrypted server record immediately.
 - **Right to Portability:** (Coming Q3 2026) Export your data in a structured format.
 
 ## 7. International Transfers
