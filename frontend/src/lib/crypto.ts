@@ -28,7 +28,17 @@ const isCryptoAvailable =
   typeof crypto.getRandomValues === 'function';
 
 if (!isCryptoAvailable) {
-  console.warn("⚠️ Web Crypto API is not available. Encryption features will be disabled.");
+  console.warn("[Crypto] Web Crypto API is not available. Encryption features will be disabled.");
+}
+
+/**
+ * Validates if a string looks like a JWT (3 parts separated by dots).
+ * This is a heuristic; a password could theoretically contain dots.
+ * For higher security, explicitly pass the key type.
+ */
+function isLikelyJwt(keyMaterial: string): boolean {
+  const parts = keyMaterial.split('.');
+  return parts.length === 3 && parts.every(p => p.length > 0);
 }
 
 /**
@@ -37,7 +47,7 @@ if (!isCryptoAvailable) {
  */
 async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promise<CryptoKey> {
   if (!isCryptoAvailable) {
-    throw new Error("Web Crypto API is not available.");
+    throw new Error("[Crypto] Web Crypto API is not available.");
   }
 
   const keyMaterial = await crypto.subtle.importKey(
@@ -68,7 +78,7 @@ async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promis
  */
 async function deriveKeyFromToken(token: string): Promise<CryptoKey> {
   if (!isCryptoAvailable) {
-    throw new Error("Web Crypto API is not available.");
+    throw new Error("[Crypto] Web Crypto API is not available.");
   }
 
   const encoder = new TextEncoder();
@@ -89,18 +99,20 @@ async function deriveKeyFromToken(token: string): Promise<CryptoKey> {
 
 /**
  * Smart Key Derivation: Detects if input is a JWT or Password.
- * - JWTs contain '.' (header.payload.signature)
- * - Passwords do not.
+ * - JWTs contain 3 parts separated by '.'
+ * - Passwords are treated as raw strings.
+ * 
+ * WARNING: If a password contains exactly 2 dots, it might be misidentified as a JWT.
+ * For critical applications, pass an explicit 'type' parameter.
  */
 async function deriveKey(keyMaterial: string, salt?: Uint8Array): Promise<CryptoKey> {
-  // Heuristic: If it contains dots, assume it's a JWT
-  if (keyMaterial.includes('.')) {
+  if (isLikelyJwt(keyMaterial)) {
     return deriveKeyFromToken(keyMaterial);
   }
   
   // Otherwise, assume it's a password
   if (!salt) {
-    throw new Error("Salt is required for password-based key derivation.");
+    throw new Error("[Crypto] Salt is required for password-based key derivation.");
   }
   return deriveKeyFromPassword(keyMaterial, salt);
 }
@@ -115,7 +127,7 @@ export async function encrypt(plainText: string, keyMaterial: string): Promise<{
   iv: string 
 }> {
   if (!isCryptoAvailable) {
-    throw new Error("Encryption failed: Web Crypto API unavailable.");
+    throw new Error("[Crypto] Encryption failed: Web Crypto API unavailable.");
   }
 
   try {
@@ -137,8 +149,10 @@ export async function encrypt(plainText: string, keyMaterial: string): Promise<{
       iv: bufferToBase64(iv)
     };
   } catch (error) {
-    console.error("Encryption error:", error);
-    throw new Error("Encryption failed.");
+    if (import.meta.env.VITE_DEBUG_MODE === "true") {
+      console.error("[Crypto] Encryption error:", error);
+    }
+    throw new Error("[Crypto] Encryption failed.");
   }
 }
 
@@ -152,7 +166,7 @@ export async function decrypt(
   ivBase64: string
 ): Promise<string> {
   if (!isCryptoAvailable) {
-    throw new Error("Decryption failed: Web Crypto API unavailable.");
+    throw new Error("[Crypto] Decryption failed: Web Crypto API unavailable.");
   }
 
   try {
@@ -173,10 +187,12 @@ export async function decrypt(
   } catch (error) {
     // Check for specific decryption failure (wrong key or corrupted data)
     if (error instanceof Error && error.name === 'OperationError') {
-      throw new Error("Decryption failed: Invalid key or corrupted data.");
+      throw new Error("[Crypto] Decryption failed: Invalid key or corrupted data.");
     }
-    console.error("Decryption error:", error);
-    throw new Error("Decryption failed.");
+    if (import.meta.env.VITE_DEBUG_MODE === "true") {
+      console.error("[Crypto] Decryption error:", error);
+    }
+    throw new Error("[Crypto] Decryption failed.");
   }
 }
 

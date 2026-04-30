@@ -4,28 +4,56 @@ import ConsentBanner from "./components/ConsentBanner";
 import SecureForm from "./components/SecureForm";
 import LoginForm from "./components/LoginForm";
 
-// Simple Error Boundary Component
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+// --- Error Boundary ---
+// Sanitized to prevent rendering user-controlled content in error messages
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null };
   }
 
-  static getDerivedStateFromError(_: Error) {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    // Log to console (and ideally to an error tracking service like Sentry)
     console.error("Uncaught error:", error, errorInfo);
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: "2rem", color: "red" }}>
-          <h2>Something went wrong.</h2>
-          <p>Please check the console for details.</p>
-          <button onClick={() => window.location.reload()}>Reload Page</button>
+        <div style={{ 
+          padding: "2rem", 
+          color: "#d32f2f", 
+          backgroundColor: "#fff8f8", 
+          border: "1px solid #d32f2f", 
+          borderRadius: "8px",
+          maxWidth: "600px",
+          margin: "2rem auto",
+          textAlign: "center"
+        }}>
+          <h2 style={{ marginTop: 0 }}>Application Error</h2>
+          <p>A critical error occurred. The application cannot continue.</p>
+          <details style={{ textAlign: "left", marginTop: "1rem", fontSize: "0.85rem", color: "#666" }}>
+            <summary>Error Details</summary>
+            <pre>{this.state.error?.message}</pre>
+          </details>
+          <button 
+            onClick={() => window.location.reload()} 
+            style={{ 
+              marginTop: "1rem", 
+              padding: "0.5rem 1rem", 
+              cursor: "pointer",
+              backgroundColor: "#d32f2f",
+              color: "white",
+              border: "none",
+              borderRadius: "4px"
+            }}
+          >
+            Reload Page
+          </button>
         </div>
       );
     }
@@ -36,18 +64,36 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 
 const App: React.FC = () => {
   const [sessionKey, setSessionKey] = useState<string | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Initialize sessionKey from localStorage on mount
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    setSessionKey(token || undefined);
+    try {
+      const token = localStorage.getItem('auth_token');
+      // Validate token format (basic check: non-empty string)
+      if (token && typeof token === 'string' && token.trim().length > 0) {
+        setSessionKey(token);
+      } else {
+        setSessionKey(undefined);
+      }
+    } catch (err) {
+      console.error("Error accessing localStorage:", err);
+      setSessionKey(undefined);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  // Listen for storage changes (e.g., login from another tab, or manual updates)
+  // Listen for storage changes (e.g., login/logout from another tab)
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'auth_token') {
-        setSessionKey(e.newValue || undefined);
+        const newToken = e.newValue;
+        if (newToken && typeof newToken === 'string' && newToken.trim().length > 0) {
+          setSessionKey(newToken);
+        } else {
+          setSessionKey(undefined);
+        }
       }
     };
 
@@ -57,43 +103,79 @@ const App: React.FC = () => {
 
   // Callback to update session key after login
   const handleLoginSuccess = useCallback((userId: string, token: string) => {
-    localStorage.setItem('auth_token', token);
-    setSessionKey(token);
-    console.log("✅ Login successful, session key updated");
+    // Validate token before setting
+    if (!token || typeof token !== 'string' || token.trim().length === 0) {
+      console.error("Invalid token received from login");
+      return;
+    }
+    
+    try {
+      localStorage.setItem('auth_token', token);
+      setSessionKey(token);
+      console.log("✅ Login successful, session key updated");
+    } catch (err) {
+      console.error("Failed to save token to localStorage:", err);
+      // Optionally show error to user
+    }
   }, []);
 
   // Callback to clear session key after logout
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('auth_token');
-    setSessionKey(undefined);
-    console.log("✅ Logged out, session key cleared");
+    try {
+      localStorage.removeItem('auth_token');
+      setSessionKey(undefined);
+      console.log("✅ Logged out, session key cleared");
+    } catch (err) {
+      console.error("Failed to remove token from localStorage:", err);
+    }
   }, []);
 
+  // Show loading state while checking localStorage
+  if (isLoading) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", fontFamily: "sans-serif" }}>
+        Loading...
+      </div>
+    );
+  }
+
   return (
-    <div style={{ padding: "2rem", fontFamily: "sans-serif" }}>
+    <div style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "800px", margin: "0 auto" }}>
       <h1>Secure Web Product</h1>
       
-      {/* Display current auth status for debugging */}
-      <div style={{ marginBottom: "1rem", padding: "0.5rem", backgroundColor: "#f0f0f0", borderRadius: "4px" }}>
+      {/* Debug Status Bar */}
+      <div style={{ 
+        marginBottom: "1.5rem", 
+        padding: "0.75rem", 
+        backgroundColor: sessionKey ? "#e8f5e9" : "#ffebee", 
+        borderRadius: "4px", 
+        border: `1px solid ${sessionKey ? "#4caf50" : "#f44336"}`,
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center"
+      }}>
         <small>
-          Auth Status: {sessionKey ? "✅ Logged In" : "❌ Not Logged In"}
-          {sessionKey && (
-            <button 
-              onClick={handleLogout}
-              style={{ marginLeft: "1rem", padding: "0.25rem 0.5rem", cursor: "pointer" }}
-            >
-              Logout
-            </button>
-          )}
+          <strong>Status:</strong> {sessionKey ? "✅ Logged In" : "❌ Not Logged In"}
         </small>
+        {sessionKey && (
+          <button 
+            onClick={handleLogout}
+            style={{ 
+              padding: "0.4rem 0.8rem", 
+              cursor: "pointer",
+              backgroundColor: "#f44336",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              fontSize: "0.9rem"
+            }}
+          >
+            Logout
+          </button>
+        )}
       </div>
 
       <ErrorBoundary>
-        {/* 
-          Conditional Rendering:
-          - If sessionKey exists, show the SecureForm (and hide login).
-          - If no sessionKey, show the LoginForm.
-        */}
         {!sessionKey ? (
           <LoginForm 
             onLoginSuccess={handleLoginSuccess} 
@@ -101,9 +183,8 @@ const App: React.FC = () => {
           />
         ) : (
           <>
-            {/* Pass the JWT token as userSessionKey */}
             <ConsentBanner userSessionKey={sessionKey} />
-            <hr />
+            <hr style={{ margin: "1.5rem 0", borderColor: "#ddd" }} />
             <SecureForm
               sessionKey={sessionKey} 
               onLogout={handleLogout} 
