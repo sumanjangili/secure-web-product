@@ -120,6 +120,8 @@ netlify functions:serve
 | npm run format | Formats code with Prettier. |
 | npm run audit | Runs npm audit to check for vulnerabilities. |
 #### Backend (cd netlify/functions)
+| Command | Description |
+| :--- | :--- |
 | netlify functions:serve | Start local functions server (http://localhost:9999) |
 | npm run build | (Optional) Pre-bundle functions if needed |
 
@@ -130,6 +132,7 @@ netlify functions:serve
 This project is designed to be deployed on Netlify.
 
 1. Connect Repository
+
 Connect your GitHub repository to Netlify.
    
 2. Build Settings
@@ -146,7 +149,7 @@ Connect your GitHub repository to Netlify.
    
 4. **Deploy**: Push to main branch.
 > "
-> ⚠ **Security Warning**: Never commit secrets (like AUDIT_SECRET) to the repo$ 
+> ⚠ **Security Warning**: Never commit secrets (like AUDIT_SECRET) to the repsitory. Use Netlify's environment variable management. 
 > "
 
 ---
@@ -250,7 +253,7 @@ This project is released under the **MIT License** – feel free to fork, modify
 6.  **Aligned Features**: Updated the feature list to include **MFA**, **Backup Codes**, and **Account Erasure**.
 7.  **Fixed Project Structure**: Listed the actual files created (`MFASetup.tsx`, `redis.js`, etc.).
 
-This README now accurately reflects **production-ready, secure, and functional** system.
+This project now accurately reflects **production-ready, secure, and functional** system.
 
 ---
 
