@@ -4,7 +4,34 @@ const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis'); 
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// --- DEBUG START: Check Environment Variable ---
+const dbUrl = process.env.DATABASE_URL;
+
+console.log('=== DEBUG: DATABASE_URL CHECK ===');
+console.log('1. Variable exists?', !!dbUrl);
+console.log('2. Value length:', dbUrl ? dbUrl.length : 0);
+if (dbUrl) {
+  // Log only the protocol and host to avoid leaking passwords in logs
+  try {
+    const urlObj = new URL(dbUrl);
+    console.log('3. Host detected:', urlObj.hostname);
+    console.log('4. Port:', urlObj.port);
+  } catch (e) {
+    console.log('3. Invalid URL format:', e.message);
+  }
+} else {
+  console.log('3. CRITICAL: DATABASE_URL is MISSING or EMPTY!');
+}
+console.log('=== DEBUG END ===');
+// ----------------------------------------------
+
+// Only initialize Pool if URL exists to prevent "base" error
+let pool;
+if (dbUrl) {
+  pool = new Pool({ connectionString: dbUrl });
+} else {
+  console.error('FATAL: Cannot create DB pool. Aborting handler.');
+}
 
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_TIME_SECONDS = 15 * 60;
@@ -26,6 +53,12 @@ exports.handler = async (event, context) => {
 
   if (!email || !password) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Email and password required' }) };
+  }
+
+  // Safety check: If pool wasn't initialized, fail fast
+  if (!pool) {
+    console.error('Handler aborted: Database pool not initialized.');
+    return { statusCode: 500, body: JSON.stringify({ error: 'Server configuration error' }) };
   }
 
   const client = await pool.connect();
@@ -88,7 +121,7 @@ exports.handler = async (event, context) => {
         success: true,
         userId: user.id,
         mfaEnabled: user.mfa_enabled || false,
-        sessionToken: token, // Return JWT
+        sessionToken: token,
         message: user.mfa_enabled ? 'MFA required' : 'Login successful'
       }),
     };
