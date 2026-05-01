@@ -13,10 +13,11 @@
     "isolatedModules": true,
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
+    "ignoreDeprecations": "5.0", 
     "paths": {
       "@/*": ["src/*"]
     },
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals", "node"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "src/types/vite-env.d.ts", "tests/**/*.tsx"],
   "exclude": ["node_modules", "dist"]
