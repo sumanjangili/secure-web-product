@@ -1,15 +1,11 @@
 [build]
-  # Run from root, which calls the frontend build
-  command = "npm run build"
+  command = "cd frontend && npm ci && npm run build"
   publish = "frontend/dist"
   functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "20"
   NETLIFY_USE_YARN = "false"
-  # Force TypeScript to ignore the baseUrl deprecation warning
-  # This acts as a fallback if tsconfig.json isn't picked up perfectly
-  NPM_CONFIG_STRICT_SSL = "false"
 
 [dev]
   framework = "vite"
