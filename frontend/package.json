@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/generate-csp.cjs",
+    "build": "tsc --ignoreDeprecations 5.0 && vite build && node scripts/generate-csp.cjs",
     "preview": "vite preview",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
