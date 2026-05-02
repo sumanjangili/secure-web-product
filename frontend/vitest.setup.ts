@@ -5,13 +5,15 @@ import "@testing-library/jest-dom";
 // ---------------------------------------------------------
 // MOCK: Intercept crypto module for all tests
 // ---------------------------------------------------------
+// Ensure the path is relative to the project root (frontend/)
+// If src/lib/crypto.ts exists, this path is correct.
 vi.mock("./src/lib/crypto", () => ({
   encrypt: vi.fn().mockResolvedValue("mocked-encrypted-value"),
   decrypt: vi.fn().mockResolvedValue('{"name":"test","email":"test@test.com"}'),
 }));
 
 /**
- * Very small in‑memory implementation of the Web Storage API.
+ * Simple in-memory implementation of the Web Storage API.
  */
 class SimpleMemoryStorage {
   private store: Record<string, string> = {};
@@ -36,12 +38,17 @@ class SimpleMemoryStorage {
 }
 
 beforeEach(() => {
+  // Replace global localStorage with our mock
   (globalThis as any).localStorage = new SimpleMemoryStorage();
-  (globalThis as any).localStorage = (globalThis as any).localStorage;
+  // Optional: Also mock sessionStorage if your app uses it
+  (globalThis as any).sessionStorage = new SimpleMemoryStorage();
 });
 
 afterEach(() => {
-  (globalThis as any).localStorage.clear();
-  // Reset mocks after each test to ensure isolation
+  // Clear storage
+  (globalThis as any).localStorage?.clear();
+  (globalThis as any).sessionStorage?.clear();
+  
+  // Reset all mocks to ensure test isolation
   vi.restoreAllMocks();
 });

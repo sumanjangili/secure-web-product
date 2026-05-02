@@ -1,13 +1,6 @@
-# netlify.toml
 [build]
-  # REMOVE THIS LINE: base = "frontend" 
-  # We will handle the frontend build via the command below
-  
-  # Run build from root, targeting the frontend folder
   command = "cd frontend && npm run build"
-  publish = "frontend/dist" # Adjust this path to match where Vite outputs
-  
-  # Functions are in the root relative to the new command context
+  publish = "frontend/dist"
   functions = "netlify/functions"
 
 [build.environment]
@@ -26,11 +19,7 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
-  
-  # Keep external modules if needed, but esbuild usually handles root deps fine now
   external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib", "@upstash/redis"]
-  
-  # Update paths to be relative to root
   included_files = ["netlify/functions/lib/**", "netlify/functions/node_modules/@upstash/**"]
 
 [[redirects]]
@@ -42,6 +31,6 @@
   for = "/*"
   [headers.values]
     X-Frame-Options = "DENY"
-    X-Content-Type-Options = "nosynff"
+    X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "geolocation=(), microphone=(), camera=()"
