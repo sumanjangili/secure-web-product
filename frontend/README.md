@@ -1,12 +1,12 @@
-## Secure Web Product
+## Secure Web Product (Frontend)
 
 > "
-> **A Privacy-First, Product Management, Zero-Knowledge Authentication & Audit Hub**.  
+> **A Privacy-First, Zero-Knowledge Authentication & Audit Hub**.  
 > A production-ready Vite + React frontend demonstrating end-to-end client-side encryption, secure MFA flows, and privacy-preserving UX patterns backed by Netlify Serverless Functions.
 > "
 > This application implements a **zero-knowledge architecture** where sensitive data is encrypted in the browser before transmission. It features a complete authentication system with **TOTP-based MFA**, **backup codes**, and **immutable audit logging**.
 
-This frontend is the client component of the Secure Web Product ecosystem.
+> **Note**: This is the client component of the Secure Web Product ecosystem. It relies on the `netlify/functions` backend for authentication and storage.
 
 ---
 
@@ -20,8 +20,7 @@ This frontend is the client component of the Secure Web Product ecosystem.
 6. [Project Structure](#project-structure)
 7. [Deployment to Netlify](#deployment-to-netlify)
 8. [Contributing](#contributing)
-9. [License](#license)
-10. [Verification Checklist](#verification-checklist)
+9. [Verification Checklist](#verification-checklist)
 
 ---
 
@@ -61,13 +60,13 @@ Terminal 2: Backend (Netlify Functions)
 netlify functions:serve
 # Runs on http://localhost:9999
 ```
-> Note: Ensure your .env file in the root contains DATABASE_URL, JWT_SECRET, and AUDIT_SECRET.
+> Important: Ensure your .env file in the root contains DATABASE_URL, JWT_SECRET, and AUDIT_SECRET.
 
 ---
 
 ### Core Features
 1. Secure Authentication & MFA
-- **Password Hashing**: Argon2id (memory-hard, resistant to GPU attacks).
+- **Password Hashing**: Argon2id (memory-hard, resistant to GPU attacks) performed server-side on the password hash derived client-side.
 - **MFA (TOTP)**: Google Authenticator/Authy compatible 6-digit codes.
 - **Backup Codes**: 10 one-time-use recovery codes generated during MFA setup.
 - **Rate Limiting**: Prevents brute-force attacks using Redis (Upstash in prod, Mock in dev).
@@ -88,13 +87,12 @@ netlify functions:serve
 - No plaintext user data is ever stored or logged.
 
 4. Privacy-First UX Components
-- **SecureForm**: Encrypted contact form with memory clearing.
-- **ConsentBanner**: Encrypted consent storage in localStorage.
+- **SecureForm**: Encrypted contact form with memory clearing on success/error/logout.
+- **ConsentBanner**:
+   - **Local Storage**: Stores consent flags as **plain JSON** for immediate UX responsiveness (non-sensitive data).
+   - **Server Record**: Syncs an **encrypted, immutable** audit log entry for legal proof of consent (GDPR Art. 7).
+   - **Rollback Mechanism**: If server sync fails, local state reverts to ensure consistency.
 - **UserSettings**: Manage MFA, regenerate backup codes, and account erasure.
-
-5. Product Management Hub
-- Includes version-controlled documentation artifacts (docs/) for roadmaps, regulatory matrices, and stakeholder maps.
-- Scripts to auto-generate documentation from source code.
 
 ---
 
@@ -117,6 +115,7 @@ AUDIT_SECRET=your_audit_secret_for_backend_validation
 # --- Frontend (Optional, usually auto-detected) ---
 VITE_API_URL=http://localhost:9999/.netlify/functions
 VITE_AUDIT_LOG_ENDPOINT=http://localhost:9999/.netlify/functions/audit_log
+VITE_DEBUG_MODE=false # Set to "true" to enable verbose crypto error logging
 ```
 #### Production (Netlify)
 Set these variables in Netlify Dashboard > Site Settings > Environment Variables:
@@ -126,6 +125,7 @@ Set these variables in Netlify Dashboard > Site Settings > Environment Variables
 - AUDIT_SECRET
 - UPSTASH_REDIS_REST_URL
 - UPSTASH_REDIS_REST_TOKEN
+- VITE_DEBUG_MODE (Set to "false" in production)
 
 ---
 
@@ -142,9 +142,7 @@ Set these variables in Netlify Dashboard > Site Settings > Environment Variables
 | npm run test:coverage | Runs tests with coverage report. |
 | npm run format | Formats code with Prettier. |
 | npm run gen-docs | Generates markdown docs from source. |
-| npm run encrypt-demo | Runs a standalone script to test encryption logic. |
 | npm run audit | Runs npm audit to check for vulnerabilities. |
-| netlify functions:serve | Start local functions server (http://localhost:9999) |
 
 ---
 
@@ -152,7 +150,9 @@ Set these variables in Netlify Dashboard > Site Settings > Environment Variables
 
 The src/lib/crypto.ts module handles all security operations:
 
-1. **Key Derivation**: Uses **PBKDF2** with SHA-256 and 100,000 iterations to derive a key from the user's password.
+1. **Key Derivation**:
+    - **Passwords**: Uses **PBKDF2** with SHA-256 and 100,000 iterations.
+    - **JWTs**: Uses **SHA-256** (single pass) for session keys, with robust heuristic detection (checks for 3-part dot structure) to avoid misidentifying passwords with dots as JWTs.
 2. **Encryption**: Uses **AES-GCM** with a randomly generated 12-byte IV and 16-byte salt.
 3. **Output**: Returns an object containing:
 ```js
@@ -162,11 +162,12 @@ The src/lib/crypto.ts module handles all security operations:
   iv: string;         // Base64 encoded Initialization Vector
 }
 ```
-4. **Decryption**: Requires the password, salt, and IV to reconstruct the key and decrypt the data.
+4. **Decryption**: Requires the password/token, salt, and IV to reconstruct the key and decrypt the data.
 
 #### Security Best Practices Implemented
 - **Memory Safety**: Sensitive strings (passwords, tokens) are explicitly cleared from React state and variables after use.
-- **No Secrets**:  JWT_SECRET and DATABASE_URL are never exposed to the browser.
+- **No Secrets**: JWT_SECRET and DATABASE_URL are never exposed to the browser.
+- **Debug Gating**: Console error logging is wrapped in if (import.meta.env.VITE_DEBUG_MODE === "true") to prevent sensitive stack traces in production. 
 - **Rate Limiting**: Prevents brute-force attacks on login and MFA endpoints. 
 - **Immutable Logs**: Audit events are written to a separate table with no update/delete permissions.
 
@@ -174,39 +175,24 @@ The src/lib/crypto.ts module handles all security operations:
 
 ### Project Structure
 ```js
-secure-web-product/
-├── frontend/                 # Vite + React Application
-│   ├── src/
-│   │  ├── components/
-│   │  │   ├── LoginForm.tsx      # Login & MFA entry
-│    │    ├── MFASetup.tsx       # QR Code & Backup Code generation
-│   │  │   ├── SecureForm.tsx     # Encrypted contact form
-│   │    └── UserSettings.tsx   # Profile & MFA management
-│    │ ├── lib/
-│   │   │   ├── crypto.ts          # AES-GCM + PBKDF2 implementation
-│   │   │   ├── mfa.ts             # TOTP logic (client-side)
-│   │   │   └── session-utils.ts   # Token storage & validation
-│   │  ├── hooks/
-│   │   │   └── useAnalytics.ts    # Privacy-safe analytics
-│   │   └── main.tsx
-│   ├── netlify/
-│   │   └── functions/             # (Shared) Backend functions
-│   └── package.json
-├── netlify/functions/        # Serverless Functions (Node.js)
+frontend/
+├── src/
+│  ├── components/
+│  │   ├── LoginForm.tsx          # Login & MFA entry
+│  │   ├── MFASetup.tsx           # QR Code & Backup Code generation
+│   │   ├── SecureForm.tsx         # Encrypted contact form
+│  │   ├── ConsentBanner.tsx      # Consent management UI
+│   │   └── UserSettings.tsx       # Profile & MFA management
 │   ├── lib/
-│   │   └── redis.js           # Hybrid Upstash/Mock Redis client
-│   ├── login.js               # Auth & Rate Limiting
-│   ├── verify-mfa.js          # MFA Code Verification
-│   ├── mfa-setup-init.js      # Generate Secret & QR
-│   ├── mfa-setup-verify.js    # Enable MFA & Gen Backup Codes
-│   ├─save-secure-data.js    # Store Encrypted Blobs
-│   ├── delete-user.js         # Account Erasure (GDPR)
-│   └─audit_log.js           # Immutable Log Writer
-├─docs/                     # Regulatory & Product Docs
-├── .env                      # (GitIgnored) Local Environment Vars
-├── netlify.toml              # Deployment Config
-└── package.json
-
+│   │   ├── crypto.ts              # AES-GCM + PBKDF2 implementation
+│   │   ├── mfa.ts                 # TOTP logic (client-side)
+│   │   └── session-utils.ts       # Token storage & validation
+│  ├─hooks/
+│  │  └── useAnalytics.ts        # Privacy-safe analytics
+│  └── main.tsx
+├- netlify/
+│  └── functions/                 # (Shared) Backend functions
+└─package.json
 ```
 
 ---
@@ -225,7 +211,7 @@ Connect your GitHub repository to Netlify.
 | Base Directory | frontend |
 | Build Command | npm run build |
 | Publish Directory | frontend/dist |
-| Functions Directory | netlify/functions (Auto-detected or set in netlify.toml) |
+| Functions Directory | netlify/functions (Auto-detected) |
 
 3. Environment Variables
 > Settings → Build & Deploy → Environment and a all required secrets.
@@ -262,11 +248,6 @@ We welcome contributions! Please follow these steps:
 
 ---
 
-### License
-MIT © Suman Jangili. See the LICENSE file for full terms.
-
----
-
 ### Verification Checklist
 Before deploying to production:
 
@@ -277,17 +258,18 @@ Before deploying to production:
 -  MFA flow (Init → Verify → Login) works end-to-end.
 -  Backup codes are generated and usable.
 -  Account erasure (delete-user) works correctly.
+-  Consent flow: Local storage is plain JSON, server record is encrypted.
 -  npm audit shows no critical vulnerabilities.
 For a detailed checklist, see [VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
 
 ---
 
 #### Key Changes Made
-1.  **Removed `npm publish`**: This is an app, not a library. Publishing it would break the build process and expose secrets.
-2.  **Updated "Quick Start"**: Added the dual-terminal requirement (`netlify functions:serve` + `npm run dev`).
+1.  **Consent Storage Model**: Updated to reflect the **Hybrid Storage** approach: Local flags are plain JSON (UX speed), while the authoritative record is encrypted on the server (Compliance). This removes the security anti-pattern of encrypting non-sensitive flags with JWTs.
+2.  **Crypto Hardening**: Added details on **robust JWT detection** and **debug-gated logging** in crypto.ts.
 3.  **Added MFA Section**: Explicitly documented the MFA flow, backup codes, and rate limiting.
-4.  **Fixed Environment Variables**: Added `JWT_SECRET` and `DATABASE_URL` which are critical for the new functions.
-5.  **Corrected Project Structure**: Listed the actual files you created (`MFASetup.tsx`, `redis.js`, etc.).
+4.  **Configuration**: Added VITE_DEBUG_MODE to environment variables and clarified the dual-terminal setup.
+5.  **Structure**: Listed the actual files created (`MFASetup.tsx`, `redis.js`, ConsentBanner.tsx and mfa.ts etc.).
 6.  **Security Warnings**: Emphasized not committing SQL files or `.env`.
 
 ___

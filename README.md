@@ -4,10 +4,12 @@
 ![Version](https://img.shields.io/github/v/tag/sumanjangili/secure-web-product?label=version)
 [![Node.js ≥20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org/)
 
-## Secure Web Product
+## Secure Web Product - Backend (Netlify Functions)
 
 > **A Privacy-First, Product Management, Zero-Knowledge Authentication & Audit Hub**.  
 > A production-ready full-stack application featuring end-to-end encryption, TOTP-based MFA, backup codes, and immutable audit logging. Built with Vite, React, Netlify Functions, PostgreSQL, and Upstash Redis.
+
+> This backend (A collection of Node.js serverless functions) provides the API layer for the Secure Web Product frontend. It enforces strict security policies: **no plaintext user data** is stored, **rate limiting** prevents brute-force attacks, and **audit logs** track every sensitive action.
 
 This repository serves as both a **functional secure application** and a **product management hub**. It demonstrates how to build a privacy-first system where sensitive data is encrypted in the browser, and all authentication events are logged immutably.
 
@@ -45,6 +47,7 @@ This repository serves as both a **functional secure application** and a **produ
    - Data (forms, notes) is encrypted locally.
    - Only { ciphertext, salt, iv } is sent to the server.
    - **Passwords never leave the client**.
+- **Hardening**: Includes robust JWT detection heuristics and debug-gated error logging to prevent information leakage.
 
 3. Immutable Audit Logging
 - All authentication events (Login, MFA, Logout, Erasure) are logged to an immutable database.
@@ -52,8 +55,11 @@ This repository serves as both a **functional secure application** and a **produ
 - **No plaintext user data** is ever stored or logged.
 
 4. Privacy-First UX
-- **SecureForm**: Encrypted contact form with memory clearing.
-- **ConsentBanner**: Encrypted consent storage in localStorage.
+- **SecureForm**: Encrypted contact form with memory clearing on success/error/logout.
+- **ConsentBanner**:
+   - **Local Storage**: Stores consent flags as **plain JSON** for immediate UX responsiveness (non-sensitive data).
+   - **Server Record**: Syncs an **encrypted, immutable** audit log entry for legal proof of consent (GDPR Art. 7).
+   - **Rollback Mechanism**: If server sync fails, local state reverts to ensure consistency.
 - **UserSettings**: Manage MFA, regenerate backup codes, and account erasure.
 
 5. Product Management Hub
@@ -182,9 +188,9 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 | `docs/roadmap.md` | Quarterly product roadmap with features, compliance milestones, and success metrics. |
 | `docs/regulatory-matrix.md` | Live checklist mapping GDPR, CCPA, ISO 27701, etc., to implemented features. |
 | `docs/stakeholder-map.md` | Roles, responsibilities, and deliverables for PM, Engineering, UX, Legal, Security, Ops. |
-| `docs/privacy-policy.md` |  Transparent Information |
+| `docs/privacy-policy.md` |  Transparent Information on data handling, consent storage, and user rights. |
 | `docs/dpia-report.md` | Neutralizes the primary risk of data exposure. |
-| `docs/risk-register.md` | Risk assessment |
+| `docs/risk-register.md` | Comprehensive risk assessment and mitigation strategies. |
 
 > *Use these during sprint planning, stakeholder demos, and compliance reviews.*
 
@@ -195,7 +201,7 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
  - **Linting**: `npm run lint` (Runs ESLint + Prettier).
  - **Type Checking**: `npm run type-check` (Runs tsc --noEmit).
  - **Security Audit**: `npm run security` (Runs npm audit and custom checks). 
-> **Coverage Goal**: Aim for ≥80% coverage on critical modules (e.g., crypto.ts, UI components). Add --coverage to the test command to generate a report.
+> **Coverage Goal**: Aim for ≥80% coverage on critical modules (e.g., crypto.ts, ConsentManager.ts, UI components). Add --coverage to the test command to generate a report.
 
 ---
 
@@ -222,6 +228,7 @@ Before deploying to production:
 -  MFA flow (Init → Verify → Login) works end-to-end.
 -  Backup codes are generated and usable.
 -  Account erasure (delete-user) works correctly.
+-  Consent flow: Local storage is plain JSON, server record is encrypted.
 -  npm audit shows no critical vulnerabilities.
 
 Run through the automated checklist before any release: 👉 [Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
@@ -244,16 +251,16 @@ This project is released under the **MIT License** – feel free to fork, modify
 
 ---
 
-#### 📝 Key Corrections Made
-1.  **Removed `libsodium`**: Replaced with **Native Web Crypto API** (AES-GCM + PBKDF2) as per actual `crypto.ts` implementation.
-2.  **Removed Key Generation Script**: The old `libsodium` key pair generation is irrelevant for symmetric encryption flow.
-3.  **Updated Tech Stack**: Explicitly mentions **PostgreSQL**, **Argon2**, **JWT**, and **Upstash Redis**.
-4.  **Corrected Local Dev Steps**: Added the dual-terminal requirement (`netlify functions:serve` + `npm run dev`) which is critical for our setup.
-5.  **Updated Environment Variables**: Added `JWT_SECRET`, `DATABASE_URL`, and `AUDIT_SECRET` which are essential for functions.
-6.  **Aligned Features**: Updated the feature list to include **MFA**, **Backup Codes**, and **Account Erasure**.
-7.  **Fixed Project Structure**: Listed the actual files created (`MFASetup.tsx`, `redis.js`, etc.).
+#### 📝 Key Corrections & Updates
+1.  **Consent Storage Model**: Updated to reflect the **Hybrid Storage** approach: Local flags are plain JSON (UX speed), while the authoritative record is encrypted on the server (Compliance). This removes the security anti-pattern of encrypting non-sensitive flags with JWTs.
+2.  **Crypto Implementation**: Confirmed use of **Native Web Crypto API** (AES-GCM + PBKDF2) and removed references to libsodium.
+3.  **Security Hardening**: Added details on the **Rollback Mechanism** in ConsentManager and **Debug-Gated Logging** in crypto.ts.
+4.  **Tech Stack Alignment**: Explicitly mentions **PostgreSQL**, **Argon2**, **JWT**, and **Upstash Redis**.
+5.  **Aligned Features**: Updated the feature list to include **MFA**, **Backup Codes**, and **Account Erasure**.
+6.  **Fixed Project Structure**: Listed the actual files created (`MFASetup.tsx`, `redis.js`, etc.).
+7.  **Documentation Accuracy**: Updated references to regulatory-matrix.md and privacy-policy.md to match the final implementation.
 
-This project now accurately reflects **production-ready, secure, and functional** system.
+This project now accurately reflects **production-ready, secure, and functional** system aligned with GDPR and security best practices.
 
 ---
 
