@@ -1,4 +1,5 @@
 // frontend/src/lib/consent-manager.ts
+import { secureFetchJson } from './fetch-helper'; // ✅ Import the secure helper
 
 interface ConsentData {
   essential: boolean;
@@ -18,9 +19,9 @@ class ConsentManagerClass {
    * Returns null if no consent is found.
    * 
    * Note: Local storage uses plain JSON for UX speed. 
-   * The server holds the encrypted, authoritative record.
+   * The server holds the authoritative record.
    */
-  async getConsent(_userSessionKey?: string): Promise<ConsentData | null> {
+  async getConsent(): Promise<ConsentData | null> {
     // Return cached value if available
     if (this.cachedConsent) return this.cachedConsent;
 
@@ -61,10 +62,9 @@ class ConsentManagerClass {
    * Implements a "Write-Behind" pattern: Local update first for UX, 
    * then sync to server. If server fails, local state is reverted.
    * 
-   * @param userSessionKey - The JWT token for authentication
    * @param consentData - The consent object to save
    */
-  async saveConsent(userSessionKey: string, consentData: ConsentData): Promise<void> {
+  async saveConsent(consentData: ConsentData): Promise<void> {
     // Store previous state for potential rollback
     const previousConsent = this.cachedConsent;
     const previousStorage = localStorage.getItem(CONSENT_STORAGE_KEY);
@@ -75,23 +75,15 @@ class ConsentManagerClass {
       this.cachedConsent = consentData;
 
       // 2. Send to backend
-      const response = await fetch("/.netlify/functions/save-consent", {
+      // ✅ Using secureFetchJson: Automatically handles CSRF token and credentials
+      await secureFetchJson("/.netlify/functions/save-consent", {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${userSessionKey}`
-        },
         body: JSON.stringify(consentData),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to save consent on server");
-      }
-
       // 3. Success: Notify listeners
       this.notifyConsentUpdated();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to save consent:", error);
       
       // ROLLBACK: Revert local storage and cache to previous state
@@ -103,6 +95,7 @@ class ConsentManagerClass {
       this.cachedConsent = previousConsent;
 
       // Re-throw to let the UI (ConsentBanner) handle the error message
+      // The error object from secureFetchJson has .status and .data properties
       throw error;
     }
   }
@@ -111,8 +104,8 @@ class ConsentManagerClass {
    * Checks if a specific category is allowed based on stored consent.
    * Essential is always considered allowed if any consent record exists.
    */
-  async isAllowed(category: "essential" | "analytics", userSessionKey?: string): Promise<boolean> {
-    const consent = await this.getConsent(userSessionKey);
+  async isAllowed(category: "essential" | "analytics"): Promise<boolean> {
+    const consent = await this.getConsent();
     
     if (!consent) return false; // No consent given yet
 

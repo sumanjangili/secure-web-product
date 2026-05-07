@@ -5,9 +5,14 @@
  * Uses the Web Crypto API (AES-GCM) with adaptive key derivation.
  * 
  * Algorithm: AES-GCM (256-bit)
- * Key Derivation: 
- *   - PBKDF2 (SHA-256, 100k iterations) for User Passwords
- *   - SHA-256 (Single pass) for JWT Tokens (Session Keys)
+ * Key Derivation: PBKDF2 (SHA-256, 100k iterations)
+ * 
+ * SECURITY NOTES:
+ * - This module is designed for USER-PASSWORDS only.
+ * - The password is NEVER sent to the server.
+ * - The server only receives the encrypted ciphertext, salt, and IV.
+ * - This library is NOT vulnerable to XSS, CSRF, or Race Conditions as it 
+ *   performs local mathematical operations only.
  */
 
 const TEXT_ENCODER = new TextEncoder();
@@ -32,22 +37,15 @@ if (!isCryptoAvailable) {
 }
 
 /**
- * Validates if a string looks like a JWT (3 parts separated by dots).
- * This is a heuristic; a password could theoretically contain dots.
- * For higher security, explicitly pass the key type.
- */
-function isLikelyJwt(keyMaterial: string): boolean {
-  const parts = keyMaterial.split('.');
-  return parts.length === 3 && parts.every(p => p.length > 0);
-}
-
-/**
  * Derives a cryptographic key from a password using PBKDF2.
- * Used for user-provided passwords (high entropy, slow derivation).
  */
 async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promise<CryptoKey> {
   if (!isCryptoAvailable) {
     throw new Error("[Crypto] Web Crypto API is not available.");
+  }
+
+  if (!password || password.length === 0) {
+    throw new Error("[Crypto] Password cannot be empty.");
   }
 
   const keyMaterial = await crypto.subtle.importKey(
@@ -73,55 +71,13 @@ async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promis
 }
 
 /**
- * Derives a key from a JWT Token using SHA-256.
- * Used for session keys (already random, fast derivation).
- */
-async function deriveKeyFromToken(token: string): Promise<CryptoKey> {
-  if (!isCryptoAvailable) {
-    throw new Error("[Crypto] Web Crypto API is not available.");
-  }
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-  
-  // Hash the token using SHA-256
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  
-  // Import the hash as a raw key for AES-GCM
-  return await crypto.subtle.importKey(
-    "raw",
-    hashBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt", "decrypt"]
-  );
-}
-
-/**
- * Smart Key Derivation: Detects if input is a JWT or Password.
- * - JWTs contain 3 parts separated by '.'
- * - Passwords are treated as raw strings.
- * 
- * WARNING: If a password contains exactly 2 dots, it might be misidentified as a JWT.
- * For critical applications, pass an explicit 'type' parameter.
- */
-async function deriveKey(keyMaterial: string, salt?: Uint8Array): Promise<CryptoKey> {
-  if (isLikelyJwt(keyMaterial)) {
-    return deriveKeyFromToken(keyMaterial);
-  }
-  
-  // Otherwise, assume it's a password
-  if (!salt) {
-    throw new Error("[Crypto] Salt is required for password-based key derivation.");
-  }
-  return deriveKeyFromPassword(keyMaterial, salt);
-}
-
-/**
- * Encrypt a UTF-8 string.
+ * Encrypt a UTF-8 string using a user-provided password.
  * Returns { ciphertext, salt, iv } as Base64 strings.
+ * 
+ * Note: Each encryption produces a unique ciphertext due to random Salt/IV.
+ * This is expected behavior and prevents pattern analysis.
  */
-export async function encrypt(plainText: string, keyMaterial: string): Promise<{ 
+export async function encrypt(plainText: string, password: string): Promise<{ 
   ciphertext: string; 
   salt: string; 
   iv: string 
@@ -130,13 +86,23 @@ export async function encrypt(plainText: string, keyMaterial: string): Promise<{
     throw new Error("[Crypto] Encryption failed: Web Crypto API unavailable.");
   }
 
+  if (!plainText || typeof plainText !== 'string') {
+    throw new Error("[Crypto] Invalid plain text.");
+  }
+
+  if (!password || password.length === 0) {
+    throw new Error("[Crypto] Password cannot be empty.");
+  }
+
   try {
+    // Generate cryptographically secure random Salt and IV
     const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
     const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
 
-    // Smart derivation
-    const key = await deriveKey(keyMaterial, salt);
+    // Derive key from password
+    const key = await deriveKeyFromPassword(password, salt);
 
+    // Encrypt
     const encryptedBuffer = await crypto.subtle.encrypt(
       { name: "AES-GCM", iv: iv as BufferSource },
       key,
@@ -152,16 +118,17 @@ export async function encrypt(plainText: string, keyMaterial: string): Promise<{
     if (import.meta.env.VITE_DEBUG_MODE === "true") {
       console.error("[Crypto] Encryption error:", error);
     }
+    // Do not expose internal error details to the user
     throw new Error("[Crypto] Encryption failed.");
   }
 }
 
 /**
- * Decrypt a Base64-encoded ciphertext.
+ * Decrypt a Base64-encoded ciphertext using the original password.
  */
 export async function decrypt(
   ciphertextBase64: string, 
-  keyMaterial: string, 
+  password: string, 
   saltBase64: string, 
   ivBase64: string
 ): Promise<string> {
@@ -169,13 +136,17 @@ export async function decrypt(
     throw new Error("[Crypto] Decryption failed: Web Crypto API unavailable.");
   }
 
+  if (!ciphertextBase64 || !saltBase64 || !ivBase64 || !password) {
+    throw new Error("[Crypto] Missing required decryption parameters.");
+  }
+
   try {
     const salt = base64ToBuffer(saltBase64);
     const iv = base64ToBuffer(ivBase64);
     const ciphertext = base64ToBuffer(ciphertextBase64);
 
-    // Smart derivation (salt is ignored for JWTs, but passed for type safety)
-    const key = await deriveKey(keyMaterial, salt);
+    // Derive key from password
+    const key = await deriveKeyFromPassword(password, salt);
 
     const decryptedBuffer = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: iv as BufferSource },
@@ -187,7 +158,8 @@ export async function decrypt(
   } catch (error) {
     // Check for specific decryption failure (wrong key or corrupted data)
     if (error instanceof Error && error.name === 'OperationError') {
-      throw new Error("[Crypto] Decryption failed: Invalid key or corrupted data.");
+      // This usually means the password was wrong or the data was tampered with
+      throw new Error("[Crypto] Decryption failed: Invalid password or corrupted data.");
     }
     if (import.meta.env.VITE_DEBUG_MODE === "true") {
       console.error("[Crypto] Decryption error:", error);

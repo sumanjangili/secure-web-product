@@ -1,11 +1,20 @@
 // src/App.tsx
-import React, { Component, ErrorInfo, ReactNode, useEffect, useState, useCallback } from "react";
+import React, { Component, ErrorInfo, ReactNode, useEffect, useState, useCallback, useRef } from "react";
 import ConsentBanner from "./components/ConsentBanner";
 import SecureForm from "./components/SecureForm";
 import LoginForm from "./components/LoginForm";
+import UserSettings from "./components/UserSettings";
+import { secureFetchJson } from "./lib/fetch-helper"; // ✅ Import secure fetch helper
+
+// --- Types ---
+interface UserProfile {
+  id: string;
+  email: string;
+  mfaEnabled: boolean;
+  needsNewBackupCodes: boolean;
+}
 
 // --- Error Boundary ---
-// Sanitized to prevent rendering user-controlled content in error messages
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
     super(props);
@@ -17,7 +26,6 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Log to console (and ideally to an error tracking service like Sentry)
     console.error("Uncaught error:", error, errorInfo);
   }
 
@@ -63,74 +71,107 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 }
 
 const App: React.FC = () => {
-  const [sessionKey, setSessionKey] = useState<string | undefined>(undefined);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false); // ✅ Prevent race condition on logout
+  
+  // Ref to track component mount status for async cleanup
+  const isMountedRef = useRef(true);
 
-  // Initialize sessionKey from localStorage on mount
+  // Initialize: Check if user is logged in by fetching profile
   useEffect(() => {
-    try {
-      const token = localStorage.getItem('auth_token');
-      // Validate token format (basic check: non-empty string)
-      if (token && typeof token === 'string' && token.trim().length > 0) {
-        setSessionKey(token);
-      } else {
-        setSessionKey(undefined);
-      }
-    } catch (err) {
-      console.error("Error accessing localStorage:", err);
-      setSessionKey(undefined);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    isMountedRef.current = true;
 
-  // Listen for storage changes (e.g., login/logout from another tab)
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'auth_token') {
-        const newToken = e.newValue;
-        if (newToken && typeof newToken === 'string' && newToken.trim().length > 0) {
-          setSessionKey(newToken);
-        } else {
-          setSessionKey(undefined);
+    const checkAuth = async () => {
+      try {
+        // ✅ UPDATED: Use secureFetchJson for automatic CSRF token and credentials
+        const data = await secureFetchJson<UserProfile>("/.netlify/functions/get-user-profile");
+        
+        if (isMountedRef.current) {
+          setCurrentUser({
+            id: data.id,
+            email: data.email,
+            mfaEnabled: data.mfaEnabled,
+            needsNewBackupCodes: data.needsNewBackupCodes
+          });
+          setIsLoggedIn(true);
+        }
+      } catch (err: any) {
+        // Handle 401 (Not logged in) gracefully
+        if (isMountedRef.current) {
+          if (err.status === 401) {
+            setIsLoggedIn(false);
+            setCurrentUser(null);
+          } else {
+            console.error("Auth check failed:", err);
+            // On network error, assume not logged in to be safe
+            setIsLoggedIn(false);
+            setCurrentUser(null);
+          }
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setIsLoading(false);
         }
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    checkAuth();
+
+    // Cleanup: Prevent state updates if component unmounts
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
-  // Callback to update session key after login
-  const handleLoginSuccess = useCallback((userId: string, token: string) => {
-    // Validate token before setting
-    if (!token || typeof token !== 'string' || token.trim().length === 0) {
-      console.error("Invalid token received from login");
-      return;
-    }
-    
+  // ✅ UPDATED: Logout with race condition protection and secure fetch
+  const handleLogout = useCallback(async () => {
+    if (isLoggingOut) return; // Prevent duplicate clicks
+    setIsLoggingOut(true);
+
     try {
-      localStorage.setItem('auth_token', token);
-      setSessionKey(token);
-      console.log("✅ Login successful, session key updated");
+      // ✅ UPDATED: Use secureFetchJson for CSRF protection
+      await secureFetchJson("/.netlify/functions/logout", { 
+        method: 'POST' 
+      });
+      
+      // Clear local state
+      setCurrentUser(null);
+      setIsLoggedIn(false);
+      
+      // Redirect to login
+      window.location.href = '/login';
     } catch (err) {
-      console.error("Failed to save token to localStorage:", err);
-      // Optionally show error to user
+      console.error("Logout failed:", err);
+      // Even if network fails, force redirect to be safe
+      window.location.href = '/login';
+    } finally {
+      setIsLoggingOut(false);
     }
-  }, []);
+  }, [isLoggingOut]);
 
-  // Callback to clear session key after logout
-  const handleLogout = useCallback(() => {
+  // ✅ UPDATED: Login callback with secure fetch
+  const handleLoginSuccess = useCallback(async () => {
     try {
-      localStorage.removeItem('auth_token');
-      setSessionKey(undefined);
-      console.log("✅ Logged out, session key cleared");
-    } catch (err) {
-      console.error("Failed to remove token from localStorage:", err);
+      // ✅ UPDATED: Use secureFetchJson for CSRF protection
+      const data = await secureFetchJson<UserProfile>("/.netlify/functions/get-user-profile");
+      
+      setCurrentUser({
+        id: data.id,
+        email: data.email,
+        mfaEnabled: data.mfaEnabled,
+        needsNewBackupCodes: data.needsNewBackupCodes
+      });
+      setIsLoggedIn(true);
+    } catch (err: any) {
+      console.error("Failed to fetch user profile after login:", err);
+      // If profile fetch fails after login, something is wrong. Force logout.
+      handleLogout();
     }
-  }, []);
+  }, [handleLogout]);
 
-  // Show loading state while checking localStorage
+  // Show loading state
   if (isLoading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", fontFamily: "sans-serif" }}>
@@ -147,48 +188,55 @@ const App: React.FC = () => {
       <div style={{ 
         marginBottom: "1.5rem", 
         padding: "0.75rem", 
-        backgroundColor: sessionKey ? "#e8f5e9" : "#ffebee", 
+        backgroundColor: isLoggedIn ? "#e8f5e9" : "#ffebee", 
         borderRadius: "4px", 
-        border: `1px solid ${sessionKey ? "#4caf50" : "#f44336"}`,
+        border: `1px solid ${isLoggedIn ? "#4caf50" : "#f44336"}`,
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center"
       }}>
         <small>
-          <strong>Status:</strong> {sessionKey ? "✅ Logged In" : "❌ Not Logged In"}
+          <strong>Status:</strong> {isLoggedIn ? "✅ Logged In" : "❌ Not Logged In"}
+          {/* ✅ XSS SAFE: React automatically escapes text content in curly braces */}
+          {currentUser && <span style={{ marginLeft: "1rem", color: "#666" }}>({currentUser.email})</span>}
         </small>
-        {sessionKey && (
+        {isLoggedIn && (
           <button 
             onClick={handleLogout}
+            disabled={isLoggingOut} // ✅ Prevent race condition
             style={{ 
               padding: "0.4rem 0.8rem", 
-              cursor: "pointer",
-              backgroundColor: "#f44336",
+              cursor: isLoggingOut ? "not-allowed" : "pointer",
+              backgroundColor: isLoggingOut ? "#999" : "#f44336",
               color: "white",
               border: "none",
               borderRadius: "4px",
-              fontSize: "0.9rem"
+              fontSize: "0.9rem",
+              opacity: isLoggingOut ? 0.7 : 1
             }}
           >
-            Logout
+            {isLoggingOut ? "Logging out..." : "Logout"}
           </button>
         )}
       </div>
 
       <ErrorBoundary>
-        {!sessionKey ? (
-          <LoginForm 
-            onLoginSuccess={handleLoginSuccess} 
-            sessionKey={sessionKey} 
-          />
+        {!isLoggedIn ? (
+          <LoginForm onLoginSuccess={handleLoginSuccess} />
         ) : (
           <>
-            <ConsentBanner userSessionKey={sessionKey} />
+            <ConsentBanner />
             <hr style={{ margin: "1.5rem 0", borderColor: "#ddd" }} />
-            <SecureForm
-              sessionKey={sessionKey} 
-              onLogout={handleLogout} 
-            />
+            
+            {currentUser && (
+              <UserSettings 
+                user={currentUser} 
+              />
+            )}
+            
+            <hr style={{ margin: "1.5rem 0", borderColor: "#ddd" }} />
+            
+            <SecureForm onLogout={handleLogout} />
           </>
         )}
       </ErrorBoundary>

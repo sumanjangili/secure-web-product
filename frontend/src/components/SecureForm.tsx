@@ -1,6 +1,7 @@
 // frontend/src/components/SecureForm.tsx
 import React, { useState, useEffect, useCallback } from "react";
 import { encrypt, decrypt } from "../lib/crypto";
+import { secureFetchJson } from "../lib/fetch-helper"; // ✅ Import the secure helper
 
 interface FormData {
   name: string;
@@ -10,11 +11,11 @@ interface FormData {
 }
 
 interface SecureFormProps {
-  sessionKey?: string; // Passed from App.tsx (Single Source of Truth)
+  sessionKey?: string; // Used only for UI state (Auth Badge)
   onLogout?: () => void;
 }
 
-// Helper to sanitize input (prevent accidental XSS if decrypted later in a non-escaped context)
+// Helper to sanitize input
 const sanitizeInput = (str: string): string => {
   return str.replace(/[<>]/g, (char) => {
     const map: Record<string, string> = { '<': '&lt;', '>': '&gt;' };
@@ -33,8 +34,7 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
   const [password, setPassword] = useState<string>("");
   const [uploading, setUploading] = useState(false);
 
-  // ✅ SECURITY: Use ONLY the prop for auth status. 
-  // Relying on localStorage here can cause race conditions if App.tsx updates it asynchronously.
+  // ✅ SECURITY: Use ONLY the prop for UI state.
   const isAuthenticated = !!sessionKey;
 
   const clearSensitiveData = useCallback(() => {
@@ -44,7 +44,6 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    // Sanitize input on change (optional, but good practice)
     const value = sanitizeInput(e.target.value);
     setForm({ ...form, [e.target.name]: value });
   };
@@ -56,6 +55,9 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    if (uploading) return; 
+
+    // UI-only check. Backend will enforce auth via cookie.
     if (!isAuthenticated) {
       setStatus("❌ You must be logged in to submit.");
       return;
@@ -84,60 +86,47 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
       // 1. Encrypt locally
       const { ciphertext, salt, iv } = await encrypt(payload, password); 
       
-      // 2. Verify round-trip (Integrity Check)
+      // 2. Verify round-trip
       const recovered = await decrypt(ciphertext, password, salt, iv);
       if (recovered !== payload) {
         throw new Error("Encryption integrity check failed. Please try again.");
       }
 
       // 3. Send to Backend
-      // sessionKey is guaranteed to be valid here because of the isAuthenticated check
-      const response = await fetch("/.netlify/functions/save-secure-data", {
+      // ✅ Using secureFetchJson: Automatically handles CSRF token and credentials
+      await secureFetchJson("/.netlify/functions/save-secure-data", {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${sessionKey}`
-        },
         body: JSON.stringify({ ciphertext, salt, iv }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        
-        if (response.status === 401) {
-          setStatus("❌ Session expired. Redirecting to login...");
-          clearSensitiveData();
-          if (onLogout) onLogout();
-          // Optional: Force reload or redirect
-          setTimeout(() => window.location.reload(), 2000);
-          return;
-        }
-        
-        throw new Error(errorData.error || "Failed to save data on server.");
-      }
-
-      // 4. Success: Clear sensitive data immediately
+      // 4. Success
       clearSensitiveData();
       setStatus("✅ Data securely encrypted and transmitted!");
       
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
+    } catch (error: any) {
+      // Handle specific HTTP errors thrown by secureFetchJson
+      if (error.status === 401) {
+        setStatus("❌ Session expired. Redirecting to login...");
+        clearSensitiveData();
+        if (onLogout) onLogout();
+        setTimeout(() => window.location.reload(), 2000);
+        return;
+      }
+
+      const errorMessage = error.data?.error || (error instanceof Error ? error.message : "An unexpected error occurred.");
       setStatus(`❌ Error: ${errorMessage}`);
-      // Clear password on error to prevent it lingering in memory
-      setPassword("");
+      setPassword(""); 
     } finally {
       setUploading(false);
     }
   };
 
-  // Clear password if component unmounts or session expires
   useEffect(() => {
     return () => {
       setPassword("");
     };
   }, []);
 
-  // Clear password if sessionKey becomes undefined (logout)
   useEffect(() => {
     if (!sessionKey) {
       clearSensitiveData();

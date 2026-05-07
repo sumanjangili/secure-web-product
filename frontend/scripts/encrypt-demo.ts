@@ -1,5 +1,6 @@
 // frontend/scripts/encrypt-demo.ts
 // ⚠️ SECURITY WARNING - DEMO ONLY ⚠️
+// This script is for LOCAL DEVELOPMENT ONLY. It must NEVER run in production or CI/CD.
 
 import { randomBytes, createCipheriv, createDecipheriv } from "crypto";
 import * as dotenv from "dotenv";
@@ -16,32 +17,50 @@ const KEY_SIZE = 32;
 const IV_SIZE = 12;
 
 // ---------------------------------------------------------------------------
-// Production Safety Checks
+// Production Safety Checks (STRICT)
 // ---------------------------------------------------------------------------
 function checkProductionEnvironment(): void {
   const nodeEnv = process.env.NODE_ENV || "development";
-  const isCI = !!process.env.CI || !!process.env.GITHUB_ACTIONS || !!process.env.TRAVIS;
+  const isCI = !!process.env.CI || !!process.env.GITHUB_ACTIONS || !!process.env.TRAVIS || !!process.env.GITLAB_CI;
   const allowDemo = process.env.ALLOW_DEMO_SCRIPT === "true";
+  const forceShowKeys = process.env.FORCE_SHOW_KEYS === "true";
 
+  // 1. Block Production
   if (nodeEnv === "production") {
-    console.error("❌ ERROR: This demo script is blocked in production environments.");
-    console.error("   Set NODE_ENV=development or ALLOW_DEMO_SCRIPT=true to override (NOT RECOMMENDED).");
+    console.error("❌ CRITICAL ERROR: This demo script is BLOCKED in production environments.");
+    console.error("   Reason: Key leakage risk.");
+    console.error("   Action: Remove this script from production builds or set NODE_ENV=development.");
     process.exit(1);
   }
 
-  if (isCI && !allowDemo) {
-    console.error("⚠️ WARNING: Running in CI/CD environment.");
-    console.error("   Console output may be logged publicly. Consider disabling this script.");
-    console.error("   Set ALLOW_DEMO_SCRIPT=true to proceed anyway.");
+  // 2. Block CI/CD unless explicitly overridden (Dangerous)
+  if (isCI) {
+    if (!allowDemo) {
+      console.error("❌ CRITICAL ERROR: This script is BLOCKED in CI/CD environments.");
+      console.error("   Reason: Logs in CI are often public or archived. Keys would be exposed.");
+      console.error("   Action: Do not run this in CI. Remove from build pipeline.");
+      process.exit(1);
+    } else {
+      console.warn("⚠️ DANGER: Running in CI/CD with ALLOW_DEMO_SCRIPT=true.");
+      console.warn("   Your encryption keys WILL be printed to logs. This is a severe security risk.");
+      console.warn("   Proceeding only because you explicitly forced it.");
+    }
   }
 
   console.log(`ℹ️  Environment: ${nodeEnv} | CI: ${isCI ? "Yes" : "No"}`);
+  
+  if (!forceShowKeys && !isCI) {
+    console.log("ℹ️  Keys will be HIDDEN by default for safety. Use FORCE_SHOW_KEYS=true to reveal.");
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Helper: pretty‑print a Buffer as base64
+// Helper: pretty‑print a Buffer as base64 (with masking option)
 // ---------------------------------------------------------------------------
-const b64 = (buf: Buffer) => buf.toString("base64");
+const b64 = (buf: Buffer, mask: boolean = true) => {
+  if (mask) return "***KEY_HIDDEN*** (Set FORCE_SHOW_KEYS=true to reveal)";
+  return buf.toString("base64");
+};
 
 // ---------------------------------------------------------------------------
 // Encryption
@@ -77,15 +96,18 @@ function decrypt(encrypted: Buffer, key: Buffer, iv: Buffer, authTag: Buffer) {
 
   const key = randomBytes(KEY_SIZE);
   const iv = randomBytes(IV_SIZE);
+  const forceShowKeys = process.env.FORCE_SHOW_KEYS === "true";
 
   console.log("\n🔐 ENCRYPTION DEMO - LOCAL DEVELOPMENT ONLY 🔐\n");
-  console.log("🔑 Key (base64) :", b64(key));
-  console.log("🔐 IV  (base64) :", b64(iv));
+  
+  // Mask keys by default to prevent accidental leaks in logs
+  console.log("🔑 Key (base64) :", b64(key, !forceShowKeys));
+  console.log("🔐 IV  (base64) :", b64(iv, !forceShowKeys));
   console.log("📝 Plaintext   :", PLAINTEXT);
 
   const { encrypted, authTag } = encrypt(PLAINTEXT, key, iv);
-  console.log("📦 Ciphertext (base64) :", b64(encrypted));
-  console.log("🏷️ Auth tag  (base64) :", b64(authTag));
+  console.log("📦 Ciphertext (base64) :", b64(encrypted, !forceShowKeys)); // Usually safe to show ciphertext, but masking for consistency
+  console.log("🏷️ Auth tag  (base64) :", b64(authTag, !forceShowKeys));
 
   const recovered = decrypt(encrypted, key, iv, authTag);
   console.log("🔓 Recovered plaintext :", recovered);
@@ -97,5 +119,8 @@ function decrypt(encrypted: Buffer, key: Buffer, iv: Buffer, authTag: Buffer) {
     process.exit(1);
   }
 
-  console.log("⚠️  REMINDER: Delete this script or add to .gitignore before deploying to production.");
+  console.log("⚠️  REMINDER: ");
+  console.log("   1. This script generates ephemeral keys. Data encrypted here cannot be decrypted later.");
+  console.log("   2. Delete this script or add to .gitignore before deploying.");
+  console.log("   3. XSS, CSRF, and Race Conditions are NOT applicable to this local script.");
 })();

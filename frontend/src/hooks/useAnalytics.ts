@@ -1,8 +1,7 @@
 // src/hooks/useAnalytics.ts
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import { ConsentManager } from "../lib/consent-manager";
 
-// Extend Window interface if using Google Analytics (optional)
 declare global {
   interface Window {
     gtag?: (command: string, eventName: string, params?: Record<string, any>) => void;
@@ -13,94 +12,81 @@ interface AnalyticsProperties {
   [key: string]: string | number | boolean | undefined;
 }
 
-/**
- * Custom hook to manage analytics tracking based on user consent.
- * 
- * Usage:
- * const { isTracking, trackEvent } = useAnalytics(userSessionKey);
- * 
- * if (isTracking) {
- *   trackEvent('button_click', { element: 'signup_btn' });
- * }
- */
-export const useAnalytics = (userSessionKey: string | undefined) => {
+export const useAnalytics = () => {
   const [isTracking, setIsTracking] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const consentCheckRef = useRef(false);
 
   const checkConsent = useCallback(async () => {
-    if (!userSessionKey) {
-      setIsTracking(false);
+    if (consentCheckRef.current) {
       return;
     }
-
+    
+    consentCheckRef.current = true;
+    
     try {
-      const allowed = await ConsentManager.isAllowed("analytics", userSessionKey);
+      const allowed = await ConsentManager.isAllowed("analytics");
       setIsTracking(allowed);
       
-      // Only log in development mode
       if (import.meta.env.VITE_DEBUG_MODE === "true") {
-        if (allowed) {
-          console.log("[Analytics] Consent granted. Tracking enabled.");
-        } else {
-          console.log("[Analytics] Consent denied. Tracking disabled.");
-        }
+        console.log(`[Analytics] Consent: ${allowed ? 'granted' : 'denied'}`);
       }
     } catch (error) {
-      console.error("[Analytics] Failed to check consent:", error);
+      console.error("[Analytics] Consent check failed:", error);
       setIsTracking(false);
+    } finally {
+      consentCheckRef.current = false;
+      setIsLoading(false);
     }
-  }, [userSessionKey]);
+  }, []);
 
   useEffect(() => {
-    // Initial check
     checkConsent();
-
-    // Subscribe to consent changes
     const unsubscribe = ConsentManager.subscribe(checkConsent);
-
-    return () => {
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [checkConsent]);
 
-  /**
-   * Helper function to track an event only if consent is granted.
-   * @param eventName - The name of the event (e.g., 'button_click')
-   * @param properties - Optional event properties (strings, numbers, booleans only)
-   */
   const trackEvent = useCallback((eventName: string, properties?: AnalyticsProperties) => {
-    if (!isTracking) {
-      // Silently ignore if not tracking (GDPR compliance)
+    if (isLoading || !isTracking) {
       return;
     }
 
-    // Sanitize properties: ensure only primitive types are sent
+    // Validate event name
+    if (!/^[a-z_]+$/.test(eventName)) {
+      console.warn('[Analytics] Invalid event name:', eventName);
+      return;
+    }
+
+    // Enhanced sanitization
     const sanitizedProps: AnalyticsProperties = {};
     if (properties) {
       Object.keys(properties).forEach((key) => {
+        if (!/^[a-zA-Z0-9_]+$/.test(key)) {
+          return;
+        }
+        
         const val = properties[key];
-        if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
+        if (typeof val === 'string') {
+          const sanitized = val.substring(0, 500).replace(/[<>]/g, '');
+          if (sanitized.length > 0) {
+            sanitizedProps[key] = sanitized;
+          }
+        } else if (typeof val === 'number' && isFinite(val) && Math.abs(val) < 1e15) {
+          sanitizedProps[key] = val;
+        } else if (typeof val === 'boolean') {
           sanitizedProps[key] = val;
         }
       });
     }
 
-    // Example implementation: Google Analytics (uncomment if needed)
-    // if (window.gtag) {
-    //   window.gtag('event', eventName, sanitizedProps);
-    // }
-    
-    // Or send to your backend (encrypted/anonymized):
-    // fetch('/.netlify/functions/log-analytics', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ event: eventName, ...sanitizedProps })
-    // });
-
-    // Debug log only in development
+    // Debug logging with safety
     if (import.meta.env.VITE_DEBUG_MODE === "true") {
-      console.log(`[Analytics] Event: ${eventName}`, sanitizedProps);
+      const safeProps = Object.fromEntries(
+        Object.entries(sanitizedProps).filter(([k]) => !k.includes('token') && !k.includes('secret'))
+      );
+      console.log(`[Analytics] Event: ${eventName}`, safeProps);
     }
-  }, [isTracking]);
+  }, [isTracking, isLoading]);
 
-  return { isTracking, trackEvent };
+  return { isTracking, trackEvent, isLoading };
 };

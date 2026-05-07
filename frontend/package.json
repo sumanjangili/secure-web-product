@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc --ignoreDeprecations 5.0 && vite build && node scripts/generate-csp.cjs",
+    "build": "tsc && vite build && node scripts/generate-csp.cjs",
     "preview": "vite preview",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -35,7 +35,7 @@
     "format:check": "prettier --check .",
     "clean": "bash ./scripts/clean.sh",
     "gen-docs": "ts-node --esm ./scripts/generate-docs.ts",
-    "encrypt-demo": "echo '⚠️  WARNING: Demo script only. Do not run in production.' && ts-node --esm --no-deprecation ./scripts/encrypt-demo.ts",
+    "encrypt-demo": "echo '⚠️  WARNING: Demo script only. Do not run in production.' && ts-node --esm ./scripts/encrypt-demo.ts",
     "audit": "npm audit",
     "prepare": "husky install"
   },

@@ -1,9 +1,11 @@
 // frontend/src/components/ConsentBanner.tsx
 import React, { useState, useEffect } from "react";
 import { ConsentManager } from "../lib/consent-manager";
+import { secureFetchJson } from "../lib/fetch-helper"; // ✅ Import the secure helper
 
 interface ConsentBannerProps {
-  userSessionKey?: string;
+  // userSessionKey is no longer needed for auth logic, kept only if used for UI display
+  userSessionKey?: string; 
 }
 
 interface ConsentData {
@@ -30,7 +32,6 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
       if (stored) {
         try {
           const parsed: ConsentData = JSON.parse(stored);
-          // Validate version
           if (parsed.version === "1.0") {
             setAnalyticsConsent(parsed.analytics);
             setVisible(false);
@@ -43,35 +44,38 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
         }
       }
 
-      // 2. If no local consent, check server (if authenticated)
-      if (userSessionKey) {
-        try {
-          const serverConsent = await ConsentManager.getConsent(userSessionKey);
-          if (serverConsent) {
-            // Sync local storage with server
-            localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(serverConsent));
-            setAnalyticsConsent(serverConsent.analytics);
-            setVisible(false);
-          } else {
-            setVisible(true);
-          }
-        } catch (error) {
+      // 2. If no local consent, check server
+      // We attempt to fetch regardless of userSessionKey presence, 
+      // as the backend will return 401 if not authenticated.
+      try {
+        // ✅ Using secureFetchJson: Handles CSRF token and credentials automatically
+        const serverConsent = await secureFetchJson<ConsentData>("/.netlify/functions/get-consent");
+        
+        // If we got here, the request was successful (200 OK)
+        localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(serverConsent));
+        setAnalyticsConsent(serverConsent.analytics);
+        setVisible(false);
+      } catch (error: any) {
+        // If 401, user is not logged in -> Show banner
+        if (error.status === 401) {
+          console.log("Not authenticated, showing consent banner.");
+          setVisible(true);
+        } else {
+          // Network error or other server error -> Show banner to be safe
           console.error("Consent check failed:", error);
-          // If server check fails, show banner to be safe
           setVisible(true);
         }
-      } else {
-        // Not authenticated, show banner
-        setVisible(true);
+      } finally {
+        setChecking(false);
       }
-      setChecking(false);
     };
 
     checkConsent();
   }, [userSessionKey]);
 
+  // ✅ CORRECTED: Removed access to private 'cachedConsent' property
   const handleSaveConsent = async (acceptAnalytics: boolean) => {
-    if (checking) return; // Prevent saving while checking
+    if (checking) return;
     
     setLoading(true);
     setErrorMessage(null);
@@ -83,27 +87,49 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
       version: "1.0",
     };
 
+    // Store previous state for potential rollback
+    const previousStorage = localStorage.getItem(CONSENT_STORAGE_KEY);
+    
     try {
-      // 1. Save locally immediately (UX responsiveness)
+      // 1. Optimistic Update: Save to local storage immediately for UX
       localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(consentData));
       setAnalyticsConsent(acceptAnalytics);
 
-      // 2. Notify Manager (which should send to server)
-      // If ConsentManager.notifyConsentUpdated requires a server call, do it here
-      if (userSessionKey) {
-        await ConsentManager.saveConsent(userSessionKey, consentData);
-      } else {
-        // If not logged in, maybe queue for later or just rely on local
-        console.log("Consent saved locally. Will sync on login.");
-      }
+      // 2. Sync to Server
+      // ✅ Using secureFetchJson: Automatically adds X-CSRF-Token and credentials: include
+      await secureFetchJson("/.netlify/functions/save-consent", {
+        method: "POST",
+        body: JSON.stringify(consentData),
+      });
 
+      // 3. Success: Notify listeners
       ConsentManager.notifyConsentUpdated();
       setVisible(false);
-    } catch (error) {
-      setErrorMessage("Could not save consent. Please try again.");
+
+    } catch (error: any) {
       console.error("Failed to save consent:", error);
-      // Revert local change if server fails? Or keep local? 
-      // Keeping local is safer for UX, but server might be out of sync.
+      
+      // Rollback: Revert local storage to previous state
+      if (previousStorage) {
+        localStorage.setItem(CONSENT_STORAGE_KEY, previousStorage);
+        // Parse and restore the UI state from the previous storage
+        try {
+          const prevParsed: ConsentData = JSON.parse(previousStorage);
+          setAnalyticsConsent(prevParsed.analytics);
+        } catch (e) {
+          setAnalyticsConsent(false); // Fallback if corrupt
+        }
+      } else {
+        localStorage.removeItem(CONSENT_STORAGE_KEY);
+        setAnalyticsConsent(false);
+      }
+
+      // Handle specific errors
+      if (error.status === 401) {
+        setErrorMessage("Session expired. Please log in to save preferences.");
+      } else {
+        setErrorMessage("Could not save consent. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -113,7 +139,6 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
     handleSaveConsent(false);
   };
 
-  // Don't render while checking to avoid flash of banner
   if (checking) return null;
   if (!visible) return null;
 
@@ -180,13 +205,14 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
             border: "1px solid #cbd5e1",
             borderRadius: "4px",
             cursor: loading ? "not-allowed" : "pointer",
-            color: "#475569",
+            color: loading ? "#94a3b8" : "#475569",
             fontWeight: 500,
-            transition: "background-color 0.2s"
+            transition: "all 0.2s"
           }}
         >
-          Reject Non-Essential
+          {loading ? "Saving..." : "Reject Non-Essential"}
         </button>
+
         <button 
           onClick={() => handleSaveConsent(true)}
           disabled={loading}

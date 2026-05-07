@@ -1,6 +1,7 @@
 // frontend/src/components/UserSettings.tsx
-import React, { useState } from "react";
-import MFASetup from "./MFASetup"; 
+import React, { useState, useEffect } from "react";
+import MFASetup from "./MFASetup";
+import { secureFetchJson } from "../lib/fetch-helper"; // ✅ Import the secure helper
 
 interface UserSettingsProps {
   user: {
@@ -8,38 +9,37 @@ interface UserSettingsProps {
     mfaEnabled?: boolean;
     id: string;
   };
+  sessionKey?: string; // Kept for backward compatibility if used elsewhere, but not for fetch
 }
 
-const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
+const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showMFASetup, setShowMFASetup] = useState(!user.mfaEnabled);
   const [generatedCodes, setGeneratedCodes] = useState<string[] | null>(null);
 
+  // --- Cleanup: Clear codes if component unmounts while visible ---
+  useEffect(() => {
+    return () => {
+      if (generatedCodes) {
+        setGeneratedCodes(null);
+      }
+    };
+  }, [generatedCodes]);
+
   // --- Handle Backup Code Management ---
   const handleManageBackupCodes = async () => {
-    try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) {
-        setMessage({ type: "error", text: "Authentication required." });
-        return;
-      }
+    setGenerating(true);
+    setMessage(null);
 
-      const response = await fetch("/.netlify/functions/generate-backup-codes", {
+    try {
+      // ✅ Using secureFetchJson: Handles CSRF token and credentials automatically
+      const data = await secureFetchJson<{ codes: string[] }>("/.netlify/functions/generate-backup-codes", {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` // ✅ JWT Only
-        },
         body: JSON.stringify({ userId: user.id }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to generate codes");
-      }
 
       // Show codes to user
       setGeneratedCodes(data.codes);
@@ -48,11 +48,13 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
       // Auto-hide codes after 30 seconds for security
       setTimeout(() => setGeneratedCodes(null), 30000);
 
-    } catch (err) {
+    } catch (error: any) {
       setMessage({ 
         type: "error", 
-        text: err instanceof Error ? err.message : "Failed to generate codes" 
+        text: error.data?.error || (error instanceof Error ? error.message : "Failed to generate codes") 
       });
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -67,17 +69,9 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
     setMessage(null);
 
     try {
-      const token = localStorage.getItem("auth_token");
-      if (!token) {
-        throw new Error("Authentication required.");
-      }
-
-      const response = await fetch("/.netlify/functions/delete-user", {
+      // ✅ Using secureFetchJson: Handles CSRF token and credentials automatically
+      await secureFetchJson("/.netlify/functions/delete-user", {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` // ✅ JWT Only
-        },
         body: JSON.stringify({ 
           userId: user.id,
           reason: "GDPR Right to Erasure",
@@ -85,19 +79,14 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Deletion failed");
-      }
-
       setMessage({ type: "success", text: "Your data has been permanently deleted." });
-      localStorage.removeItem("auth_token");
+      // Backend handles cookie clearing via Set-Cookie header
       window.location.href = "/login";
 
-    } catch (err) {
+    } catch (error: any) {
       setMessage({ 
         type: "error", 
-        text: err instanceof Error ? err.message : "An unexpected error occurred." 
+        text: error.data?.error || (error instanceof Error ? error.message : "An unexpected error occurred.") 
       });
     } finally {
       setDeleting(false);
@@ -107,23 +96,25 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
 
   // Styles
   const primaryButtonStyle: React.CSSProperties = {
-    backgroundColor: "#2563eb",
+    backgroundColor: generating ? "#93c5fd" : "#2563eb",
     color: "white",
     border: "none",
     padding: "0.75rem 1.5rem",
     borderRadius: "4px",
-    cursor: "pointer",
+    cursor: generating ? "not-allowed" : "pointer",
     fontWeight: "bold",
-    fontSize: "1rem"
+    fontSize: "1rem",
+    opacity: generating ? 0.7 : 1,
+    transition: "background-color 0.2s"
   };
 
   const dangerButtonStyle: React.CSSProperties = {
-    backgroundColor: "#d32f2f",
+    backgroundColor: deleting ? "#999" : "#d32f2f",
     color: "white",
     border: "none",
     padding: "0.75rem 1.5rem",
     borderRadius: "4px",
-    cursor: "pointer",
+    cursor: deleting ? "not-allowed" : "pointer",
     fontWeight: "bold",
     fontSize: "1rem"
   };
@@ -179,6 +170,8 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
                 Protect your account by enabling Two-Factor Authentication.
               </p>
               <MFASetup 
+                // sessionKey prop is no longer needed for MFASetup logic, but kept if used internally
+                // sessionKey={sessionKey} 
                 onSuccess={() => {
                   setShowMFASetup(false);
                   setMessage({ type: "success", text: "MFA Enabled Successfully!" });
@@ -201,8 +194,15 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
         <button 
           onClick={handleManageBackupCodes}
           style={primaryButtonStyle}
+          disabled={generating}
         >
-          Generate New Backup Codes
+          {generating ? (
+            <>
+              <span style={{ marginRight: "0.5rem" }}>⏳</span> Generating...
+            </>
+          ) : (
+            "Generate New Backup Codes"
+          )}
         </button>
       </div>
 
@@ -237,7 +237,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
             <span>Are you sure?</span>
             <button 
               onClick={handleDeleteRequest}
-              disabled={deleting}
+              disabled={deleting} 
               style={{
                 backgroundColor: deleting ? "#999" : "#d32f2f",
                 color: "white",
@@ -245,20 +245,22 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
                 padding: "0.75rem 1.5rem",
                 borderRadius: "4px",
                 cursor: deleting ? "not-allowed" : "pointer",
-                fontWeight: "bold"
+                fontWeight: "bold",
+                opacity: deleting ? 0.7 : 1
               }}
             >
               {deleting ? "Processing..." : "Yes, Delete Everything"}
             </button>
             <button 
               onClick={() => setConfirming(false)}
+              disabled={deleting}
               style={{
-                backgroundColor: "transparent",
-                color: "#666",
+                backgroundColor: deleting ? "#e0e0e0" : "transparent",
+                color: deleting ? "#999" : "#666",
                 border: "1px solid #ccc",
                 padding: "0.75rem 1.5rem",
                 borderRadius: "4px",
-                cursor: "pointer"
+                cursor: deleting ? "not-allowed" : "pointer"
               }}
             >
               Cancel

@@ -1,11 +1,12 @@
 // frontend/src/components/LoginForm.tsx
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 
 type LoginStep = "credentials" | "mfa" | "backup-code";
 
 interface LoginFormProps {
-  onLoginSuccess: (userId: string, token: string) => void;
-  sessionKey?: string;
+  // ✅ UPDATED: Removed token argument. The cookie handles auth.
+  onLoginSuccess: (userId: string) => void; 
+  // ✅ REMOVED: sessionKey prop (no longer needed)
 }
 
 // Helper to sanitize error messages (remove potential HTML tags)
@@ -13,7 +14,7 @@ const sanitizeError = (msg: string): string => {
   return msg.replace(/<[^>]*>/g, '');
 };
 
-const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => {
+const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
   const [step, setStep] = useState<LoginStep>("credentials");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -46,20 +47,20 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (retryAfter > 0) return;
+    
+    if (loading || retryAfter > 0) return;
 
     setLoading(true);
     setError("");
 
     try {
-      // ✅ CORRECT: Use relative path. 
-      // Netlify Dev proxies this to localhost:9999
-      // Production serves this from the same domain (securewebproducts.netlify.app)
       const endpoint = "/.netlify/functions/login";
 
+      // ✅ CRITICAL: credentials: "include" allows the browser to receive the Set-Cookie header
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include", 
         body: JSON.stringify({ email, password }),
       });
 
@@ -78,12 +79,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
       if (data.mfaEnabled) {
         setStep("mfa");
       } else {
-        if (data.sessionToken) {
-          // Notify parent to handle storage and state
-          onLoginSuccess(data.userId, data.sessionToken);
-        } else {
-          throw new Error("Login successful but no token received");
-        }
+        // ✅ SUCCESS: Cookie is set by backend. Notify parent to fetch profile.
+        onLoginSuccess(data.userId); 
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -94,31 +91,21 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
 
   const handleMfaSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (retryAfter > 0) return;
+    
+    if (loading || retryAfter > 0) return;
 
     setLoading(true);
     setError("");
 
     try {
-      // ✅ CORRECT: Use relative path
       const endpoint = "/.netlify/functions/verify-mfa";
       
-      // Use sessionKey if available (from App.tsx), otherwise fallback to localStorage
-      // This handles the case where the user might have refreshed the page
-      const token = sessionKey || localStorage.getItem("auth_token");
-      
-      if (!token) {
-        throw new Error("Authentication session expired. Please log in again.");
-      }
-
+      // ✅ The browser automatically sends the 'auth_token' cookie set during step 1
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", 
         body: JSON.stringify({ 
-          email, 
           mfaCode,
           method: "totp"
         }),
@@ -140,11 +127,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
           throw new Error(sanitizeError(data.error || "MFA verification failed"));
         }
       } else {
-        if (data.sessionToken) {
-          onLoginSuccess(data.userId, data.sessionToken);
-        } else {
-          throw new Error("MFA successful but no token received");
-        }
+        // ✅ SUCCESS: Cookie is now fully validated. Notify parent.
+        onLoginSuccess(data.userId);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "MFA verification failed");
@@ -155,28 +139,20 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
 
   const handleBackupCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (retryAfter > 0) return;
+    
+    if (loading || retryAfter > 0) return;
 
     setLoading(true);
     setError("");
 
     try {
-      // ✅ CORRECT: Use relative path
       const endpoint = "/.netlify/functions/verify-mfa";
       
-      const token = sessionKey || localStorage.getItem("auth_token");
-      if (!token) {
-        throw new Error("Authentication session expired. Please log in again.");
-      }
-
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", 
         body: JSON.stringify({ 
-          email, 
           backupCode: backupCode.toUpperCase(),
           method: "backup"
         }),
@@ -194,11 +170,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
         throw new Error(sanitizeError(data.error || "Backup code invalid or already used"));
       }
 
-      if (data.sessionToken) {
-        onLoginSuccess(data.userId, data.sessionToken);
-      } else {
-        throw new Error("Backup code successful but no token received");
-      }
+      // ✅ SUCCESS: Cookie is validated. Notify parent.
+      onLoginSuccess(data.userId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Backup code verification failed");
     } finally {
@@ -207,13 +180,15 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
   };
 
   const toggleBackupCodeMode = () => {
+    if (loading || retryAfter > 0) return;
+    
     setStep(step === "mfa" ? "backup-code" : "mfa");
     setMfaCode("");
     setBackupCode("");
     setError("");
   };
 
-  // Styles (Sanitized: no dynamic user input in styles)
+  // Styles
   const containerStyle: React.CSSProperties = {
     maxWidth: "400px",
     margin: "2rem auto",
@@ -239,10 +214,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
     color: "white",
     border: "none",
     borderRadius: "4px",
-    cursor: loading ? "not-allowed" : "pointer",
+    cursor: loading || retryAfter > 0 ? "not-allowed" : "pointer",
     fontSize: "1rem",
     fontWeight: 600,
-    opacity: loading ? 0.7 : 1,
+    opacity: loading || retryAfter > 0 ? 0.7 : 1,
     transition: "background-color 0.2s"
   };
 
@@ -315,7 +290,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
               type="button" 
               onClick={toggleBackupCodeMode} 
               style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", textDecoration: "underline", fontSize: "0.9rem" }}
-              disabled={retryAfter > 0}
+              disabled={loading || retryAfter > 0}
             >
               Can't access your authenticator? Use a backup code
             </button>
@@ -346,7 +321,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, sessionKey }) => 
               type="button" 
               onClick={toggleBackupCodeMode} 
               style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", textDecoration: "underline", fontSize: "0.9rem" }}
-              disabled={retryAfter > 0}
+              disabled={loading || retryAfter > 0}
             >
               Back to authenticator app
             </button>
