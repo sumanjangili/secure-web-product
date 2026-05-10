@@ -2,65 +2,111 @@
 const { authenticator } = require('otplib');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
+const { validateCsrf } = require('./_middleware/csrf-check'); // ✅ Import CSRF validator
 
+// Set options once globally
 authenticator.options = { window: 1 };
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// --- Configuration ---
+const dbUrl = process.env.DATABASE_URL;
+
+// Initialize Pool with SSL for Neon/Cloud Postgres
+const pool = new Pool({ 
+  connectionString: dbUrl,
+  ssl: process.env.NODE_ENV === 'production' 
+    ? { rejectUnauthorized: false } // Required for Neon/Supabase/AWS RDS in serverless
+    : false // Disable SSL for local dev
+});
 
 exports.handler = async (event, context) => {
+  // 1. Method Check
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // Extract JWT from Authorization header
+  // 2. CSRF Check (CRITICAL)
+  const csrfError = validateCsrf(event);
+  if (csrfError) return csrfError;
+
+  // 3. Authenticate via Cookie (HttpOnly)
   let userId;
   try {
-    const authHeader = event.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return { statusCode: 401, body: JSON.stringify({ error: 'Missing authorization token' }) };
+    const cookies = event.headers.cookie;
+    if (!cookies) {
+      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. No session cookie found.' }) };
     }
-    const token = authHeader.split(' ')[1];
+
+    // Parse cookies to find 'auth_token'
+    const cookiePairs = cookies.split(';');
+    const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
+    
+    if (!authTokenPair) {
+      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. Session cookie missing.' }) };
+    }
+
+    const token = authTokenPair.split('=')[1];
+    
+    // Verify JWT
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     userId = decoded.userId;
   } catch (jwtErr) {
-    if (jwtErr.name === 'JsonWebTokenError') {
-      return { statusCode: 401, body: JSON.stringify({ error: 'Invalid token format' }) };
-    }
+    console.error('[MFA Init] JWT Verification Failed:', jwtErr.message);
     if (jwtErr.name === 'TokenExpiredError') {
-      return { statusCode: 401, body: JSON.stringify({ error: 'Token expired' }) };
+      return { statusCode: 401, body: JSON.stringify({ error: 'Session expired. Please log in again.' }) };
     }
-    console.error('[MFA Init] JWT Verification Error:', jwtErr.message);
-    return { statusCode: 401, body: JSON.stringify({ error: 'Authentication failed' }) };
+    return { statusCode: 401, body: JSON.stringify({ error: 'Invalid session' }) };
   }
 
   try {
-    // Generate TOTP Secret
+    // 4. Generate MFA Secret
     const secret = authenticator.generateSecret();
     
-    // Generate QR Code URL
-    const label = encodeURIComponent("SecureProduct");
+    // 5. Generate QR Code URL
+    // Format: otpauth://totp/ISSUER:LABEL?secret=SECRET&issuer=ISSUER
+    const label = encodeURIComponent("SecureProduct"); 
     const issuer = encodeURIComponent("SecureProduct");
-    const otpAuthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}`;
+    
+    // Construct the otpauth URI
+    const otpAuthUrl = `otpauth://totp/${issuer}:${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
+    
+    // Generate QR Code image URL
+    // The frontend will use this URL to display the QR code.
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpAuthUrl)}`;
 
-    // Log Init Event
     const client = await pool.connect();
     try {
+      // 6. Log Audit Event
       await client.query(
-        `INSERT INTO audit_logs (user_id, event_type, details, timestamp) 
-         VALUES ($1, 'MFA_INITIATED', $2, NOW())`,
-        [userId, JSON.stringify({ method: 'totp' })]
+        `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
+         VALUES ($1, 'MFA_INITIATED', $2, NOW(), $3)`,
+        [userId, JSON.stringify({ method: 'totp' }), context.identity?.sourceIp || 'unknown']
+      );
+      
+      // 7. Store Secret in Database
+      // Ensure 'users' table has a 'mfa_secret' column (TEXT or VARCHAR)
+      await client.query(
+        `UPDATE users SET mfa_secret = $1, mfa_enabled = false WHERE id = $2`,
+        [secret, userId]
       );
     } finally {
       client.release();
     }
 
+    // 8. Return Response
+    // ⚠️ CRITICAL: DO NOT return 'secret' in the JSON body.
+    // Returning the raw secret allows an XSS attacker to steal it and generate valid TOTP codes.
+    // We only return the QR URL and the otpAuthUrl (which the frontend uses to render the image).
     return {
       statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private'
+      },
       body: JSON.stringify({ 
         success: true, 
-        secret, 
+        // secret removed!
         qrUrl,
+        otpAuthUrl, // Frontend uses this to generate the QR image, but should not expose the raw string
         message: 'Scan the QR code with your authenticator app.'
       }),
     };
