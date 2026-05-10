@@ -1,7 +1,7 @@
 // frontend/src/components/UserSettings.tsx
 import React, { useState, useEffect } from "react";
 import MFASetup from "./MFASetup";
-import { secureFetchJson } from "../lib/fetch-helper"; // ✅ Import the secure helper
+import { secureFetchJson } from "../lib/fetch-helper"; 
 
 interface UserSettingsProps {
   user: {
@@ -9,7 +9,7 @@ interface UserSettingsProps {
     mfaEnabled?: boolean;
     id: string;
   };
-  sessionKey?: string; // Kept for backward compatibility if used elsewhere, but not for fetch
+  sessionKey?: string;
 }
 
 const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
@@ -19,8 +19,12 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showMFASetup, setShowMFASetup] = useState(!user.mfaEnabled);
   const [generatedCodes, setGeneratedCodes] = useState<string[] | null>(null);
+  
+  // State for Audit Logs
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
 
-  // --- Cleanup: Clear codes if component unmounts while visible ---
   useEffect(() => {
     return () => {
       if (generatedCodes) {
@@ -29,23 +33,18 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     };
   }, [generatedCodes]);
 
-  // --- Handle Backup Code Management ---
   const handleManageBackupCodes = async () => {
     setGenerating(true);
     setMessage(null);
 
     try {
-      // ✅ Using secureFetchJson: Handles CSRF token and credentials automatically
       const data = await secureFetchJson<{ codes: string[] }>("/.netlify/functions/generate-backup-codes", {
         method: "POST",
         body: JSON.stringify({ userId: user.id }),
       });
 
-      // Show codes to user
       setGeneratedCodes(data.codes);
       setMessage({ type: "success", text: "New backup codes generated! Save them now." });
-      
-      // Auto-hide codes after 30 seconds for security
       setTimeout(() => setGeneratedCodes(null), 30000);
 
     } catch (error: any) {
@@ -58,7 +57,25 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     }
   };
 
-  // --- Handle Account Deletion ---
+  // Handler to fetch audit logs
+  const handleFetchLogs = async () => {
+    setLoadingLogs(true);
+    setMessage(null);
+    try {
+      const data = await secureFetchJson<{ logs: any[]; count: number }>("/.netlify/functions/audit_log");
+      setLogs(data.logs);
+      setShowLogs(true);
+      setMessage({ type: "success", text: `Loaded ${data.count} recent log entries.` });
+    } catch (err: any) {
+      setMessage({ 
+        type: "error", 
+        text: err.data?.error || "Failed to load logs. You may not have permission." 
+      });
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
   const handleDeleteRequest = async () => {
     if (!confirming) {
       setConfirming(true);
@@ -69,7 +86,6 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     setMessage(null);
 
     try {
-      // ✅ Using secureFetchJson: Handles CSRF token and credentials automatically
       await secureFetchJson("/.netlify/functions/delete-user", {
         method: "POST",
         body: JSON.stringify({ 
@@ -80,7 +96,6 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
       });
 
       setMessage({ type: "success", text: "Your data has been permanently deleted." });
-      // Backend handles cookie clearing via Set-Cookie header
       window.location.href = "/login";
 
     } catch (error: any) {
@@ -96,15 +111,15 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
 
   // Styles
   const primaryButtonStyle: React.CSSProperties = {
-    backgroundColor: generating ? "#93c5fd" : "#2563eb",
+    backgroundColor: generating || loadingLogs ? "#93c5fd" : "#2563eb",
     color: "white",
     border: "none",
     padding: "0.75rem 1.5rem",
     borderRadius: "4px",
-    cursor: generating ? "not-allowed" : "pointer",
+    cursor: generating || loadingLogs ? "not-allowed" : "pointer",
     fontWeight: "bold",
     fontSize: "1rem",
-    opacity: generating ? 0.7 : 1,
+    opacity: generating || loadingLogs ? 0.7 : 1,
     transition: "background-color 0.2s"
   };
 
@@ -127,7 +142,6 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
       <div style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #ddd", borderRadius: "4px", backgroundColor: "#fafafa" }}>
         <h3 style={{ marginTop: 0, marginBottom: "1rem", color: "#333" }}>Security Status</h3>
         
-        {/* Backup Code Alert */}
         {user.needsNewBackupCodes && (
           <div style={{ 
             padding: "0.75rem", 
@@ -142,7 +156,6 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
           </div>
         )}
 
-        {/* Generated Codes Display */}
         {generatedCodes && (
           <div style={{ 
             padding: "1rem", 
@@ -160,7 +173,6 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
           </div>
         )}
 
-        {/* MFA Setup Section */}
         <div style={{ marginBottom: "1.5rem", padding: "1rem", border: "1px solid #e0e0e0", borderRadius: "4px" }}>
           <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Two-Factor Authentication (2FA)</h4>
           
@@ -170,8 +182,6 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
                 Protect your account by enabling Two-Factor Authentication.
               </p>
               <MFASetup 
-                // sessionKey prop is no longer needed for MFASetup logic, but kept if used internally
-                // sessionKey={sessionKey} 
                 onSuccess={() => {
                   setShowMFASetup(false);
                   setMessage({ type: "success", text: "MFA Enabled Successfully!" });
@@ -198,7 +208,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
         >
           {generating ? (
             <>
-              <span style={{ marginRight: "0.5rem" }}>⏳</span> Generating...
+              <span style={{ marginRight: "0.5rem" }}>⏳ Generating...</span>
             </>
           ) : (
             "Generate New Backup Codes"
@@ -206,12 +216,65 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
         </button>
       </div>
 
-      {/* SECTION 2: Danger Zone (Delete Account) */}
+      {/* SECTION 2: System Audit Logs (NEW) */}
+      <div style={{ marginTop: "2rem", padding: "1rem", border: "1px solid #ddd", borderRadius: "4px", backgroundColor: "#f9f9f9" }}>
+        <h3 style={{ marginTop: 0, marginBottom: "0.5rem", color: "#333" }}>System Audit Logs</h3>
+        <p style={{ fontSize: "0.9rem", color: "#666", marginBottom: "1rem" }}>
+          View recent security events (Login, Logout, Data Saves). 
+          <br/><em>Note: Admins see all logs; regular users see only their own.</em>
+        </p>
+        
+        <button 
+          onClick={handleFetchLogs}
+          disabled={loadingLogs}
+          style={{ 
+            ...primaryButtonStyle, 
+            backgroundColor: loadingLogs ? "#93c5fd" : "#6c757d",
+            width: "auto",
+            marginRight: "1rem"
+          }}
+        >
+          {loadingLogs ? "Loading..." : "Load Recent Logs"}
+        </button>
+
+        {showLogs && (
+          <div style={{ marginTop: "1rem", maxHeight: "300px", overflowY: "auto", border: "1px solid #eee", padding: "0.5rem", backgroundColor: "#fff" }}>
+            {logs.length === 0 ? (
+              <p style={{ textAlign: "center", color: "#888" }}>No logs found.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #ddd", textAlign: "left" }}>
+                    <th style={{ padding: "0.5rem" }}>Time</th>
+                    <th style={{ padding: "0.5rem" }}>Event</th>
+                    <th style={{ padding: "0.5rem" }}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((log) => (
+                    <tr key={log.id} style={{ borderBottom: "1px solid #eee" }}>
+                      <td style={{ padding: "0.5rem", whiteSpace: "nowrap" }}>
+                        {new Date(log.timestamp).toLocaleString()}
+                      </td>
+                      <td style={{ padding: "0.5rem", fontWeight: "bold", color: "#2563eb" }}>
+                        {log.event_type}
+                      </td>
+                      <td style={{ padding: "0.5rem", color: "#555", wordBreak: "break-word" }}>
+                        {typeof log.details === 'string' ? log.details : JSON.stringify(log.details)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 3: Danger Zone (Delete Account) */}
       <div style={{ marginTop: "2rem", borderTop: "1px solid #eee", paddingTop: "1rem" }}>
         <h3 style={{ color: "#d32f2f", marginTop: 0 }}>Danger Zone</h3>
-        <p>
-          Once you delete your account, there is no going back. Please be certain.
-        </p>
+        <p>Once you delete your account, there is no going back. Please be certain.</p>
 
         {message && (
           <div style={{ 

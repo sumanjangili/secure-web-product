@@ -1,10 +1,9 @@
 // frontend/src/components/ConsentBanner.tsx
 import React, { useState, useEffect } from "react";
 import { ConsentManager } from "../lib/consent-manager";
-import { secureFetchJson } from "../lib/fetch-helper"; // ✅ Import the secure helper
+import { secureFetchJson } from "../lib/fetch-helper"; 
 
 interface ConsentBannerProps {
-  // userSessionKey is no longer needed for auth logic, kept only if used for UI display
   userSessionKey?: string; 
 }
 
@@ -26,7 +25,7 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
 
   useEffect(() => {
     const checkConsent = async () => {
-      // 1. Check local storage first (fast path)
+      // 1. Check local storage first
       const stored = localStorage.getItem(CONSENT_STORAGE_KEY);
       
       if (stored) {
@@ -34,6 +33,8 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
           const parsed: ConsentData = JSON.parse(stored);
           if (parsed.version === "1.0") {
             setAnalyticsConsent(parsed.analytics);
+            // Only hide if we have valid data AND the user is logged in (optional logic)
+            // If user is NOT logged in, we might still want to show it to collect consent
             setVisible(false);
             setChecking(false);
             return;
@@ -45,23 +46,20 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
       }
 
       // 2. If no local consent, check server
-      // We attempt to fetch regardless of userSessionKey presence, 
-      // as the backend will return 401 if not authenticated.
       try {
-        // ✅ Using secureFetchJson: Handles CSRF token and credentials automatically
         const serverConsent = await secureFetchJson<ConsentData>("/.netlify/functions/get-consent");
         
-        // If we got here, the request was successful (200 OK)
+        // If successful, save and hide
         localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(serverConsent));
         setAnalyticsConsent(serverConsent.analytics);
         setVisible(false);
       } catch (error: any) {
-        // If 401, user is not logged in -> Show banner
-        if (error.status === 401) {
-          console.log("Not authenticated, showing consent banner.");
+        // If 401 (not logged in) or network error, SHOW the banner
+        if (error.status === 401 || !error.status) {
+          console.log("Not authenticated or error, showing consent banner.");
           setVisible(true);
         } else {
-          // Network error or other server error -> Show banner to be safe
+          // Other errors -> Show banner to be safe
           console.error("Consent check failed:", error);
           setVisible(true);
         }
@@ -71,9 +69,8 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
     };
 
     checkConsent();
-  }, [userSessionKey]);
+  }, [userSessionKey]); // Re-run if userSessionKey changes (e.g., after login)
 
-  // ✅ CORRECTED: Removed access to private 'cachedConsent' property
   const handleSaveConsent = async (acceptAnalytics: boolean) => {
     if (checking) return;
     
@@ -87,44 +84,39 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
       version: "1.0",
     };
 
-    // Store previous state for potential rollback
     const previousStorage = localStorage.getItem(CONSENT_STORAGE_KEY);
     
     try {
-      // 1. Optimistic Update: Save to local storage immediately for UX
+      // Optimistic Update
       localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(consentData));
       setAnalyticsConsent(acceptAnalytics);
 
-      // 2. Sync to Server
-      // ✅ Using secureFetchJson: Automatically adds X-CSRF-Token and credentials: include
+      // Sync to Server
       await secureFetchJson("/.netlify/functions/save-consent", {
         method: "POST",
         body: JSON.stringify(consentData),
       });
 
-      // 3. Success: Notify listeners
       ConsentManager.notifyConsentUpdated();
       setVisible(false);
 
     } catch (error: any) {
       console.error("Failed to save consent:", error);
       
-      // Rollback: Revert local storage to previous state
+      // Rollback
       if (previousStorage) {
         localStorage.setItem(CONSENT_STORAGE_KEY, previousStorage);
-        // Parse and restore the UI state from the previous storage
         try {
           const prevParsed: ConsentData = JSON.parse(previousStorage);
           setAnalyticsConsent(prevParsed.analytics);
         } catch (e) {
-          setAnalyticsConsent(false); // Fallback if corrupt
+          setAnalyticsConsent(false);
         }
       } else {
         localStorage.removeItem(CONSENT_STORAGE_KEY);
         setAnalyticsConsent(false);
       }
 
-      // Handle specific errors
       if (error.status === 401) {
         setErrorMessage("Session expired. Please log in to save preferences.");
       } else {
@@ -139,8 +131,22 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
     handleSaveConsent(false);
   };
 
+  // DEV TOOL: Add a button to reset consent for testing
+  const handleResetConsent = () => {
+    localStorage.removeItem(CONSENT_STORAGE_KEY);
+    window.location.reload();
+  };
+
   if (checking) return null;
-  if (!visible) return null;
+  if (!visible) return (
+    // Optional: Show a small "Reset" button in dev mode to test the banner
+    <button 
+      onClick={handleResetConsent}
+      style={{ position: 'fixed', top: 10, right: 10, zIndex: 9999, opacity: 0.5, fontSize: '0.8rem' }}
+    >
+      Reset Consent (Dev)
+    </button>
+  );
 
   return (
     <section

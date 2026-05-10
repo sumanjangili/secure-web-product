@@ -1,7 +1,7 @@
 // frontend/src/components/SecureForm.tsx
 import React, { useState, useEffect, useCallback } from "react";
 import { encrypt, decrypt } from "../lib/crypto";
-import { secureFetchJson } from "../lib/fetch-helper"; // ✅ Import the secure helper
+import { secureFetchJson } from "../lib/fetch-helper"; 
 
 interface FormData {
   name: string;
@@ -11,11 +11,10 @@ interface FormData {
 }
 
 interface SecureFormProps {
-  sessionKey?: string; // Used only for UI state (Auth Badge)
+  sessionKey?: string; // Now passed from App.tsx as currentUser?.id
   onLogout?: () => void;
 }
 
-// Helper to sanitize input
 const sanitizeInput = (str: string): string => {
   return str.replace(/[<>]/g, (char) => {
     const map: Record<string, string> = { '<': '&lt;', '>': '&gt;' };
@@ -34,7 +33,7 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
   const [password, setPassword] = useState<string>("");
   const [uploading, setUploading] = useState(false);
 
-  // ✅ SECURITY: Use ONLY the prop for UI state.
+  // ✅ CRITICAL FIX: Check if sessionKey exists
   const isAuthenticated = !!sessionKey;
 
   const clearSensitiveData = useCallback(() => {
@@ -57,7 +56,7 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
     
     if (uploading) return; 
 
-    // UI-only check. Backend will enforce auth via cookie.
+    // Double check auth (UI + Backend)
     if (!isAuthenticated) {
       setStatus("❌ You must be logged in to submit.");
       return;
@@ -83,28 +82,24 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
     try {
       const payload = JSON.stringify(form);
       
-      // 1. Encrypt locally
       const { ciphertext, salt, iv } = await encrypt(payload, password); 
       
-      // 2. Verify round-trip
+      // Verify round-trip
       const recovered = await decrypt(ciphertext, password, salt, iv);
       if (recovered !== payload) {
         throw new Error("Encryption integrity check failed. Please try again.");
       }
 
-      // 3. Send to Backend
-      // ✅ Using secureFetchJson: Automatically handles CSRF token and credentials
+      // Send to Backend
       await secureFetchJson("/.netlify/functions/save-secure-data", {
         method: "POST",
         body: JSON.stringify({ ciphertext, salt, iv }),
       });
 
-      // 4. Success
       clearSensitiveData();
       setStatus("✅ Data securely encrypted and transmitted!");
       
     } catch (error: any) {
-      // Handle specific HTTP errors thrown by secureFetchJson
       if (error.status === 401) {
         setStatus("❌ Session expired. Redirecting to login...");
         clearSensitiveData();

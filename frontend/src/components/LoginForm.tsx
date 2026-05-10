@@ -1,15 +1,16 @@
 // frontend/src/components/LoginForm.tsx
 import React, { useState, useEffect } from "react";
+// Use the secure helper that handles CSRF and credentials automatically
+// ✅ UPDATED: Import the correct name 'secureFetchJson'
+import { secureFetchJson } from "../lib/fetch-helper"; 
 
 type LoginStep = "credentials" | "mfa" | "backup-code";
 
 interface LoginFormProps {
-  // ✅ UPDATED: Removed token argument. The cookie handles auth.
   onLoginSuccess: (userId: string) => void; 
-  // ✅ REMOVED: sessionKey prop (no longer needed)
 }
 
-// Helper to sanitize error messages (remove potential HTML tags)
+// Helper to sanitize error messages
 const sanitizeError = (msg: string): string => {
   return msg.replace(/<[^>]*>/g, '');
 };
@@ -45,6 +46,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
     setError("");
   }, [step]);
 
+  // STEP 1: Credentials Submission
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -56,39 +58,40 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
     try {
       const endpoint = "/.netlify/functions/login";
 
-      // ✅ CRITICAL: credentials: "include" allows the browser to receive the Set-Cookie header
-      const response = await fetch(endpoint, {
+      // ✅ UPDATED: Use secureFetchJson (handles CSRF automatically)
+      // Note: Login doesn't strictly need CSRF if it's the first step, but keeping it consistent is fine.
+      // However, since login sets the cookie, we must ensure credentials: include is handled.
+      // Our helper does this.
+      const data = await secureFetchJson<{ 
+        success: boolean; 
+        userId: string; 
+        mfaEnabled: boolean; 
+        message: string;
+      }>(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", 
         body: JSON.stringify({ email, password }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          const waitTime = data.retryAfter || 900;
-          setRetryAfter(waitTime);
-          setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minutes.`);
-          return;
-        }
-        throw new Error(sanitizeError(data.error || "Invalid credentials"));
-      }
 
       if (data.mfaEnabled) {
         setStep("mfa");
       } else {
-        // ✅ SUCCESS: Cookie is set by backend. Notify parent to fetch profile.
+        // SUCCESS: Cookie is set by backend. Notify parent.
         onLoginSuccess(data.userId); 
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+    } catch (err: any) {
+      if (err.status === 429) {
+        const waitTime = err.data?.retryAfter || 900;
+        setRetryAfter(waitTime);
+        setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minutes.`);
+      } else {
+        setError(err.data?.error || (err instanceof Error ? err.message : "Login failed"));
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  // STEP 2: MFA Submission
   const handleMfaSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -100,43 +103,42 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
     try {
       const endpoint = "/.netlify/functions/verify-mfa";
       
-      // ✅ The browser automatically sends the 'auth_token' cookie set during step 1
-      const response = await fetch(endpoint, {
+      // ✅ UPDATED: Use secureFetchJson to send X-CSRF-Token header
+      const data = await secureFetchJson<{ 
+        success: boolean; 
+        userId: string; 
+        message: string;
+        requiresBackupCode?: boolean;
+      }>(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", 
         body: JSON.stringify({ 
           mfaCode,
           method: "totp"
         }),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          const waitTime = data.retryAfter || 900;
-          setRetryAfter(waitTime);
-          setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minutes.`);
-          return;
-        }
-        if (data.requiresBackupCode) {
-          setStep("backup-code");
-          setError("Invalid TOTP code. Please use a backup code.");
-        } else {
-          throw new Error(sanitizeError(data.error || "MFA verification failed"));
-        }
+      // SUCCESS: Cookie is now fully validated. Notify parent.
+      onLoginSuccess(data.userId);
+      
+    } catch (err: any) {
+      if (err.status === 429) {
+        const waitTime = err.data?.retryAfter || 900;
+        setRetryAfter(waitTime);
+        setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minutes.`);
+      } else if (err.status === 403) {
+        setError("CSRF validation failed. Please refresh the page and try again.");
+      } else if (err.data?.requiresBackupCode) {
+        setStep("backup-code");
+        setError("Invalid TOTP code. Please use a backup code.");
       } else {
-        // ✅ SUCCESS: Cookie is now fully validated. Notify parent.
-        onLoginSuccess(data.userId);
+        setError(err.data?.error || (err instanceof Error ? err.message : "MFA verification failed"));
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "MFA verification failed");
     } finally {
       setLoading(false);
     }
   };
 
+  // STEP 3: Backup Code Submission
   const handleBackupCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -148,32 +150,30 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
     try {
       const endpoint = "/.netlify/functions/verify-mfa";
       
-      const response = await fetch(endpoint, {
+      // ✅ UPDATED: Use secureFetchJson to send X-CSRF-Token header
+      const data = await secureFetchJson<{ 
+        success: boolean; 
+        userId: string; 
+        message: string;
+      }>(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", 
         body: JSON.stringify({ 
           backupCode: backupCode.toUpperCase(),
           method: "backup"
         }),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          const waitTime = data.retryAfter || 900;
-          setRetryAfter(waitTime);
-          setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minutes.`);
-          return;
-        }
-        throw new Error(sanitizeError(data.error || "Backup code invalid or already used"));
-      }
-
-      // ✅ SUCCESS: Cookie is validated. Notify parent.
+      // Cookie is validated. Notify parent.
       onLoginSuccess(data.userId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Backup code verification failed");
+      
+    } catch (err: any) {
+      if (err.status === 429) {
+        const waitTime = err.data?.retryAfter || 900;
+        setRetryAfter(waitTime);
+        setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minutes.`);
+      } else {
+        setError(err.data?.error || (err instanceof Error ? err.message : "Backup code invalid or already used"));
+      }
     } finally {
       setLoading(false);
     }
@@ -188,7 +188,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess }) => {
     setError("");
   };
 
-  // Styles
+  // Styles (unchanged)
   const containerStyle: React.CSSProperties = {
     maxWidth: "400px",
     margin: "2rem auto",
