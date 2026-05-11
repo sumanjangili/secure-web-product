@@ -2,19 +2,10 @@
 
 /**
  * Validates the Double-Submit Cookie pattern.
- * 
- * Requirements:
- * 1. Request must contain a cookie named 'csrf_token'
- * 2. Request must contain a header 'X-CSRF-Token' with the same value
- * 
- * @param {Object} event - The Netlify Function event object
- * @returns {Object|null} - Returns a 403 response object if invalid, null if valid
+ * Robustly handles case-insensitivity and cookie parsing.
  */
 const validateCsrf = (event) => {
-  // 1. Get the CSRF token from the custom header (case-insensitive check)
-  const headerToken = event.headers['x-csrf-token'] || event.headers['X-CSRF-Token'];
-  
-  // 2. Get the CSRF token from the non-HttpOnly cookie
+  // 1. Get the CSRF token from the cookie
   const cookieHeader = event.headers.cookie;
   
   if (!cookieHeader) {
@@ -25,9 +16,21 @@ const validateCsrf = (event) => {
     };
   }
 
-  // Robust regex to handle "key=value" and "key=value; " (with space)
-  const cookieMatch = cookieHeader.match(/(?:^|;\s*)csrf_token=([^;]*)/i);
-  const cookieToken = cookieMatch ? cookieMatch[1] : null;
+  // Parse cookies manually to handle spaces and special chars reliably
+  const cookies = cookieHeader.split('; ');
+  let cookieToken = null;
+
+  for (const cookie of cookies) {
+    if (cookie.startsWith('csrf_token=')) {
+      const value = cookie.substring('csrf_token='.length);
+      try {
+        cookieToken = decodeURIComponent(value);
+      } catch {
+        cookieToken = value;
+      }
+      break;
+    }
+  }
 
   if (!cookieToken) {
     return {
@@ -37,7 +40,10 @@ const validateCsrf = (event) => {
     };
   }
 
-  // 3. Validate presence of header
+  // 2. Get the CSRF token from the header
+  // Netlify normalizes all header names to lowercase
+  const headerToken = event.headers['x-csrf-token'];
+
   if (!headerToken) {
     return {
       statusCode: 403,
@@ -46,9 +52,20 @@ const validateCsrf = (event) => {
     };
   }
 
-  // 4. Compare tokens strictly
-  if (headerToken !== cookieToken) {
-    console.warn(`[CSRF] Mismatch detected. Header: ${headerToken.substring(0, 8)}..., Cookie: ${cookieToken.substring(0, 8)}...`);
+  // 3. Compare tokens
+  // Decode header token just in case
+  let decodedHeaderToken;
+  try {
+    decodedHeaderToken = decodeURIComponent(headerToken);
+  } catch {
+    decodedHeaderToken = headerToken;
+  }
+
+  if (decodedHeaderToken !== cookieToken) {
+    console.warn(`[CSRF] Mismatch detected.`);
+    console.warn(`  Header: ${decodedHeaderToken.substring(0, 10)}...`);
+    console.warn(`  Cookie: ${cookieToken.substring(0, 10)}...`);
+    
     return {
       statusCode: 403,
       body: JSON.stringify({ error: 'CSRF token mismatch' }),

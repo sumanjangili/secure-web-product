@@ -1,44 +1,83 @@
 // frontend/src/lib/fetch-helper.ts
 
-export const getCsrfToken = (): string | null => {
+/**
+ * Safely extracts a cookie value by name.
+ * Uses split logic to avoid regex edge cases with special characters.
+ */
+function getCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
-  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
-  return match ? match[1] : null;
-};
+  
+  const cookieString = document.cookie;
+  if (!cookieString) return null;
 
-// Base fetch function that adds CSRF token and credentials
-export const secureFetch = async (
-  url: string, 
-  options: RequestInit = {}
-): Promise<Response> => {
-  const csrfToken = getCsrfToken();
-  const baseHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
-  };
-  if (csrfToken) {
-    baseHeaders['X-CSRF-Token'] = csrfToken;
+  // Split by '; ' to get individual cookies
+  const cookies = cookieString.split('; ');
+  
+  for (const cookie of cookies) {
+    // Check if this cookie starts with the name
+    if (cookie.startsWith(`${name}=`)) {
+      // Extract the value part
+      const value = cookie.substring(name.length + 1);
+      // Decode in case it was URL-encoded (e.g., spaces became %20)
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        // If decoding fails, return raw value
+        return value;
+      }
+    }
   }
-  const finalOptions: RequestInit = {
-    ...options,
-    headers: baseHeaders,
-    credentials: 'include',
-  };
-  try {
-    const response = await fetch(url, finalOptions);
-    return response;
-  } catch (error) {
-    console.error(`Network error fetching ${url}:`, error);
-    throw error;
-  }
-};
+  return null;
+}
 
-// Typed JSON wrapper that parses responses and handles errors
-export const secureFetchJson = async <T = any>(
+interface SecureFetchOptions extends RequestInit {
+  skipCsrf?: boolean;
+}
+
+/**
+ * Wrapper for fetch that automatically handles:
+ * 1. Credentials (include cookies)
+ * 2. CSRF Token injection (Double-Submit pattern)
+ * 3. Error parsing
+ */
+export async function secureFetchJson<T = any>(
   url: string,
-  options: RequestInit = {}
-): Promise<T> => {
-  const response = await secureFetch(url, options);
+  options: SecureFetchOptions = {}
+): Promise<T> {
+  const { skipCsrf = false, headers = {}, ...restOptions } = options;
+
+  // 1. Prepare Headers
+  const finalHeaders: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...headers,
+  };
+
+  // 2. Inject CSRF Token if not skipped
+  if (!skipCsrf) {
+    const csrfToken = getCookie('csrf_token');
+    
+    if (csrfToken) {
+      // CRITICAL: Use the exact header name the backend expects
+      // Backend middleware checks 'x-csrf-token' (lowercase)
+      finalHeaders['X-CSRF-Token'] = csrfToken;
+      console.debug('[SecureFetch] CSRF token injected:', csrfToken.substring(0, 8) + '...');
+    } else {
+      // Only warn if we are not on the login page (where CSRF might not be set yet)
+      // But for MFA/Profile, this is critical.
+      if (!url.includes('/login')) {
+        console.warn('[SecureFetch] No CSRF token found in cookies for:', url);
+      }
+    }
+  }
+
+  // 3. Execute Request
+  const response = await fetch(url, {
+    ...restOptions,
+    headers: finalHeaders,
+    credentials: 'include', // CRITICAL: Sends cookies
+  });
+
+  // 4. Handle Errors
   if (!response.ok) {
     let errorData: any = { error: 'Unknown error' };
     try {
@@ -46,10 +85,17 @@ export const secureFetchJson = async <T = any>(
     } catch {
       errorData = { error: response.statusText };
     }
-    const error = new Error(errorData.error || `HTTP ${response.status}`);
-    (error as any).status = response.status;
-    (error as any).data = errorData;
+
+    const error: any = new Error(errorData.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.data = errorData;
     throw error;
   }
-  return response.json();
-};
+
+  // 5. Parse JSON
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('Invalid JSON response');
+  }
+}
