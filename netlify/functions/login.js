@@ -141,22 +141,27 @@ exports.handler = async (event, context) => {
     // 11. Update Last Login
     await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    // 12. Return Response with BOTH Cookies
+    // 12. Return Response with BOTH Cookies (PRODUCTION SAFE VERSION)
     const isProd = process.env.NODE_ENV === 'production';
     const samesiteFlag = isProd ? 'Strict' : 'Lax'; 
     const secureFlag = isProd ? 'Secure' : ''; 
     
-    // Return as an array of strings. 
-    // Each string is a valid cookie header. No newlines inside the strings.
+    // Construct cookies as an array
     const cookies = [
       `auth_token=${token}; HttpOnly; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}`,
       `csrf_token=${csrfToken}; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}`
     ];
 
+    // DEBUG: Log the cookie length to ensure it's not too huge
+    console.log(`[Login] Cookie 1 Length: ${cookies[0].length}`);
+    console.log(`[Login] Cookie 2 Length: ${cookies[1].length}`);
+
     return {
       statusCode: 200,
       headers: {
-        'Set-Cookie': cookies, // <--- Array is the correct format for multiple cookies
+        // Netlify Production: Array is usually fine, but if it fails, try joining with comma (rare)
+        // We stick to array as it's the standard for multiple Set-Cookie
+        'Set-Cookie': cookies, 
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'X-Frame-Options': 'DENY',
