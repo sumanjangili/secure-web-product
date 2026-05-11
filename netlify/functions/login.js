@@ -84,8 +84,7 @@ exports.handler = async (event, context) => {
 
     if (attempts >= MAX_LOGIN_ATTEMPTS) {
       const ttl = await redis.ttl(rateKey).catch(() => LOCKOUT_TIME_SECONDS);
-      // Log rate limit event (IP passed as 5th arg)
-      const ipAddress = context.identity?.sourceIp || 'unknown';
+      const ipAddress = context?.identity?.sourceIp || 'unknown';
       await logAuditEvent(client, user.id, 'LOGIN_RATE_LIMITED', { email, attempts }, ipAddress);
       
       return {
@@ -101,7 +100,6 @@ exports.handler = async (event, context) => {
     const isValid = await argon2.verify(user.password_hash, password);
 
     if (!isValid) {
-      // Increment rate limit with error handling
       try {
         await redis.incr(rateKey);
         await redis.expire(rateKey, LOCKOUT_TIME_SECONDS);
@@ -109,18 +107,17 @@ exports.handler = async (event, context) => {
         console.warn('[Login] Redis incr/expire failed:', redisErr.message);
       }
       
-      const ipAddress = context.identity?.sourceIp || 'unknown';
+      const ipAddress = context?.identity?.sourceIp || 'unknown';
       await logAuditEvent(client, user.id, 'LOGIN_FAILED', { email }, ipAddress);
       
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
 
-    // 7. Success: Reset Rate Limit (Wrapped in try/catch)
+    // 7. Success: Reset Rate Limit
     try {
       await redis.del(rateKey);
     } catch (redisErr) {
       console.warn('[Login] Redis del failed:', redisErr.message);
-      // Continue execution even if Redis fails
     }
 
     // 8. Generate JWT
@@ -133,8 +130,8 @@ exports.handler = async (event, context) => {
     // 9. Generate CSRF Token
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
-    // 10. Audit Log (FIXED: Pass ipAddress as 5th argument explicitly)
-    const ipAddress = context.identity?.sourceIp || 'unknown';
+    // 10. Audit Log
+    const ipAddress = context?.identity?.sourceIp || 'unknown';
     await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { 
       email, 
       mfaRequired: user.mfa_enabled || false,
@@ -149,15 +146,21 @@ exports.handler = async (event, context) => {
     const samesiteFlag = isProd ? 'Strict' : 'Lax'; 
     const secureFlag = isProd ? 'Secure' : ''; 
     
+    // Return as an array of strings. 
+    // Each string is a valid cookie header. No newlines inside the strings.
+    const cookies = [
+      `auth_token=${token}; HttpOnly; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}`,
+      `csrf_token=${csrfToken}; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}`
+    ];
+
     return {
       statusCode: 200,
       headers: {
-        'Set-Cookie': [ 
-          `auth_token=${token}; HttpOnly; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}`,
-          `csrf_token=${csrfToken}; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}` 
-        ],
+        'Set-Cookie': cookies, // <--- Array is the correct format for multiple cookies
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, private'
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+        'X-Frame-Options': 'DENY',
+        'X-Content-Type-Options': 'nosniff'
       },
       body: JSON.stringify({
         success: true,
@@ -168,18 +171,15 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    // Enhanced error logging for debugging 502 errors
     console.error('[Login] UNCAUGHT ERROR:', error.message);
     console.error('[Login] Stack:', error.stack);
-    console.error('[Login] Event:', JSON.stringify(event));
-    
+    // Do not log the full event to avoid leaking sensitive data in logs
     return { statusCode: 500, body: JSON.stringify({ error: 'An unexpected error occurred' }) };
   } finally {
     client.release();
   }
 };
 
-// Helper function to log audit events
 async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
     const safeDetails = {
@@ -195,6 +195,5 @@ async function logAuditEvent(client, userId, eventType, details, ipAddress) {
     );
   } catch (err) {
     console.error('[Audit Log] Failed to write:', err.message);
-    // Do not throw here to prevent login failure if logging fails
   }
 }
