@@ -2,8 +2,8 @@
 const { Pool } = require('pg');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto'); // Added for CSRF token generation
-const redis = require('./lib/redis'); 
+const crypto = require('crypto');
+const redis = require('./lib/redis');
 
 // --- Configuration ---
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -79,12 +79,15 @@ exports.handler = async (event, context) => {
       const attemptsStr = await redis.get(rateKey);
       attempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
     } catch (redisErr) {
-      console.warn('[Login] Redis error (non-fatal):', redisErr.message);
+      console.warn('[Login] Redis get error (non-fatal):', redisErr.message);
     }
 
     if (attempts >= MAX_LOGIN_ATTEMPTS) {
       const ttl = await redis.ttl(rateKey).catch(() => LOCKOUT_TIME_SECONDS);
-      await logAuditEvent(client, user.id, 'LOGIN_RATE_LIMITED', { email, attempts });
+      // Log rate limit event (IP passed as 5th arg)
+      const ipAddress = context.identity?.sourceIp || 'unknown';
+      await logAuditEvent(client, user.id, 'LOGIN_RATE_LIMITED', { email, attempts }, ipAddress);
+      
       return {
         statusCode: 429,
         body: JSON.stringify({ 
@@ -98,15 +101,27 @@ exports.handler = async (event, context) => {
     const isValid = await argon2.verify(user.password_hash, password);
 
     if (!isValid) {
-      // Increment rate limit
-      await redis.incr(rateKey);
-      await redis.expire(rateKey, LOCKOUT_TIME_SECONDS);
-      await logAuditEvent(client, user.id, 'LOGIN_FAILED', { email });
+      // Increment rate limit with error handling
+      try {
+        await redis.incr(rateKey);
+        await redis.expire(rateKey, LOCKOUT_TIME_SECONDS);
+      } catch (redisErr) {
+        console.warn('[Login] Redis incr/expire failed:', redisErr.message);
+      }
+      
+      const ipAddress = context.identity?.sourceIp || 'unknown';
+      await logAuditEvent(client, user.id, 'LOGIN_FAILED', { email }, ipAddress);
+      
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
 
-    // 7. Success: Reset Rate Limit
-    await redis.del(rateKey);
+    // 7. Success: Reset Rate Limit (Wrapped in try/catch)
+    try {
+      await redis.del(rateKey);
+    } catch (redisErr) {
+      console.warn('[Login] Redis del failed:', redisErr.message);
+      // Continue execution even if Redis fails
+    }
 
     // 8. Generate JWT
     const token = jwt.sign(
@@ -115,32 +130,31 @@ exports.handler = async (event, context) => {
       { expiresIn: SESSION_DURATION }
     );
 
-    // 9. Generate CSRF Token (Double-Submit Pattern)
+    // 9. Generate CSRF Token
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
-    // 10. Audit Log
+    // 10. Audit Log (FIXED: Pass ipAddress as 5th argument explicitly)
+    const ipAddress = context.identity?.sourceIp || 'unknown';
     await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { 
       email, 
       mfaRequired: user.mfa_enabled || false,
-      ip: context.identity?.sourceIp || 'unknown',
       timestamp: new Date().toISOString() 
-    });
+    }, ipAddress);
 
     // 11. Update Last Login
     await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
     // 12. Return Response with BOTH Cookies
-    // Conditionally apply 'Secure' flag only in production
     const isProd = process.env.NODE_ENV === 'production';
     const samesiteFlag = isProd ? 'Strict' : 'Lax'; 
-    const secureFlag = isProd ? 'Secure' : ''; // Empty string for localhost/http
+    const secureFlag = isProd ? 'Secure' : ''; 
     
     return {
       statusCode: 200,
       headers: {
         'Set-Cookie': [ 
-          `auth_token=${token}; HttpOnly; ${secureFlag}; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION}`,
-          `csrf_token=${csrfToken}; ${secureFlag}; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION}` 
+          `auth_token=${token}; HttpOnly; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}`,
+          `csrf_token=${csrfToken}; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}` 
         ],
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private'
@@ -154,19 +168,24 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    console.error('[Login] Unexpected Error:', error);
+    // Enhanced error logging for debugging 502 errors
+    console.error('[Login] UNCAUGHT ERROR:', error.message);
+    console.error('[Login] Stack:', error.stack);
+    console.error('[Login] Event:', JSON.stringify(event));
+    
     return { statusCode: 500, body: JSON.stringify({ error: 'An unexpected error occurred' }) };
   } finally {
     client.release();
   }
 };
 
+// Helper function to log audit events
 async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
     const safeDetails = {
-      event_type: eventType, // Required by constraint
-      timestamp: new Date().toISOString(), // Required by constraint
-      ...details // Spread original details (email, ip, etc.)
+      event_type: eventType,
+      timestamp: new Date().toISOString(),
+      ...details
     };
 
     await client.query(
@@ -176,5 +195,6 @@ async function logAuditEvent(client, userId, eventType, details, ipAddress) {
     );
   } catch (err) {
     console.error('[Audit Log] Failed to write:', err.message);
+    // Do not throw here to prevent login failure if logging fails
   }
 }
