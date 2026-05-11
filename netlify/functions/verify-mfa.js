@@ -105,7 +105,8 @@ exports.handler = async (event, context) => {
 
     if (attempts >= MAX_ATTEMPTS) {
       const ttl = await redis.ttl(rateKey).catch(() => LOCKOUT_TIME_SECONDS);
-      await logAuditEvent(client, userId, 'MFA_RATE_LIMITED', { method });
+      const ipAddress = context.identity?.sourceIp || 'unknown';
+      await logAuditEvent(client, userId, 'MFA_RATE_LIMITED', { method }, ipAddress);
       return {
         statusCode: 429,
         body: JSON.stringify({ 
@@ -149,7 +150,8 @@ exports.handler = async (event, context) => {
         console.warn('[VerifyMFA] Redis incr failed:', redisErr.message);
       }
       
-      await logAuditEvent(client, userId, 'MFA_FAILED', { method });
+      const ipAddress = context.identity?.sourceIp || 'unknown';
+      await logAuditEvent(client, userId, 'MFA_FAILED', { method }, ipAddress);
       return {
         statusCode: 401,
         body: JSON.stringify({ 
@@ -183,11 +185,11 @@ exports.handler = async (event, context) => {
       );
 
       // 11. Log Success
+      const ipAddress = context.identity?.sourceIp || 'unknown';
       await logAuditEvent(client, userId, 'MFA_SUCCESS', { 
         method, 
-        ip: context.identity?.sourceIp || 'unknown',
-        timestamp: new Date().toISOString()
-      });
+        ip: ipAddress
+      }, ipAddress);
 
       // Commit the transaction
       await client.query('COMMIT');
@@ -200,11 +202,14 @@ exports.handler = async (event, context) => {
       }
 
       // 13. Return Response with NEW Cookie
+      const isProd = process.env.NODE_ENV === 'production';
+      const secureFlag = isProd ? 'Secure' : '';
+      
       return {
         statusCode: 200,
         headers: {
           // ✅ CRITICAL: Set the new fully-authenticated cookie
-          'Set-Cookie': `auth_token=${newToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`,
+          'Set-Cookie': `auth_token=${newToken}; HttpOnly; ${secureFlag}; SameSite=Strict; Path=/; Max-Age=86400`,
           'Content-Type': 'application/json',
           'Cache-Control': 'no-store, no-cache, must-revalidate, private'
         },
@@ -231,12 +236,20 @@ exports.handler = async (event, context) => {
   }
 };
 
-async function logAuditEvent(client, userId, eventType, details) {
+// ✅ FIXED: Updated logAuditEvent to ensure details structure matches DB constraint
+async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
+    // ✅ FIX: Ensure details object contains required keys
+    const safeDetails = {
+      event_type: eventType, // Required by constraint
+      timestamp: new Date().toISOString(), // Required by constraint
+      ...details // Spread original details (method, ip, etc.)
+    };
+
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
        VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, eventType, JSON.stringify(details), details.ip || 'unknown']
+      [userId, eventType, JSON.stringify(safeDetails), ipAddress || 'unknown']
     );
   } catch (err) {
     console.error('[Audit Log] Failed:', err.message);

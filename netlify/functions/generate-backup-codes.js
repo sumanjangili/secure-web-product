@@ -123,11 +123,21 @@ exports.handler = async (event, context) => {
       [hashes, userId]
     );
 
-    // 8. Log Event
+    // 8. Log Event (FIXED: Ensuring details structure matches DB constraint)
+    const ipAddress = context.identity?.sourceIp || 'unknown';
+    const auditTimestamp = new Date().toISOString();
+    
+    // ✅ FIX: Explicitly include event_type and timestamp in the details object
+    const safeDetails = {
+      event_type: 'BACKUP_CODES_GENERATED',
+      timestamp: auditTimestamp,
+      count: CODE_COUNT
+    };
+
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, 'BACKUP_CODES_GENERATED', $2, NOW(), $3)`,
-      [userId, JSON.stringify({ count: CODE_COUNT }), context.identity?.sourceIp || 'unknown']
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, 'BACKUP_CODES_GENERATED', JSON.stringify(safeDetails), ipAddress]
     );
 
     // 9. Increment Rate Limit
@@ -162,3 +172,21 @@ exports.handler = async (event, context) => {
     client.release();
   }
 };
+
+// ✅ Helper function for consistency (optional if using inline logic above, but recommended for DRY)
+async function logAuditEvent(client, userId, eventType, details, ipAddress) {
+  try {
+    const safeDetails = {
+      event_type: eventType,
+      timestamp: new Date().toISOString(),
+      ...details
+    };
+    await client.query(
+      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, eventType, JSON.stringify(safeDetails), ipAddress || 'unknown']
+    );
+  } catch (err) {
+    console.error('[Audit Log] Failed:', err.message);
+  }
+}

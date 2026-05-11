@@ -120,16 +120,22 @@ exports.handler = async (event, context) => {
       [userId, essential, analytics, version, safeTimestamp]
     );
 
-    // 7. Log to Audit Trail
+    // 7. Log to Audit Trail (FIXED: Ensuring details structure matches DB constraint)
+    const ipAddress = context.identity?.sourceIp || 'unknown';
+
+    // ✅ FIX: Explicitly include event_type and timestamp in the details object
+    const safeDetails = {
+      event_type: 'CONSENT_UPDATED',
+      timestamp: safeTimestamp,
+      essential,
+      analytics,
+      version
+    };
+
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
        VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, 'CONSENT_UPDATED', JSON.stringify({ 
-        essential, 
-        analytics, 
-        version,
-        timestamp: safeTimestamp 
-      }), context.identity?.sourceIp || 'unknown']
+      [userId, 'CONSENT_UPDATED', JSON.stringify(safeDetails), ipAddress]
     );
 
     // 8. Increment Rate Limit

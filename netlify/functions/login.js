@@ -161,12 +161,18 @@ exports.handler = async (event, context) => {
   }
 };
 
-async function logAuditEvent(client, userId, eventType, details) {
+async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
+    const safeDetails = {
+      event_type: eventType, // Required by constraint
+      timestamp: new Date().toISOString(), // Required by constraint
+      ...details // Spread original details (email, ip, etc.)
+    };
+
     await client.query(
-      `INSERT INTO audit_logs (user_id, event_type, details, timestamp) 
-       VALUES ($1, $2, $3, NOW())`,
-      [userId, eventType, JSON.stringify(details)]
+      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, eventType, JSON.stringify(safeDetails), ipAddress || 'unknown']
     );
   } catch (err) {
     console.error('[Audit Log] Failed to write:', err.message);

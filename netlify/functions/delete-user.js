@@ -76,19 +76,36 @@ exports.handler = async (event, context) => {
     // 5. Log the Deletion Request (Before deletion)
     const reason = sanitizeLogInput(payload.reason || 'GDPR Right to Erasure');
     const timestamp = payload.timestamp ? new Date(payload.timestamp).toISOString() : new Date().toISOString();
+    const ipAddress = context.identity?.sourceIp || 'unknown';
+
+    // ✅ FIX: Ensure details object contains required keys
+    const safeDetailsRequest = {
+      event_type: 'USER_ERASURE_REQUESTED',
+      timestamp: timestamp,
+      reason: reason
+    };
 
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, 'USER_ERASURE_REQUESTED', $2, NOW(), $3)`,
-      [userId, JSON.stringify({ reason, timestamp }), context.identity?.sourceIp || 'unknown']
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, 'USER_ERASURE_REQUESTED', JSON.stringify(safeDetailsRequest), ipAddress]
     );
 
     // 6. Log Completion (BEFORE deleting the user to ensure FK validity)
     // This ensures the audit log entry is valid even if the user row is deleted immediately after.
+    const completedTimestamp = new Date().toISOString();
+    
+    // ✅ FIX: Ensure details object contains required keys
+    const safeDetailsComplete = {
+      event_type: 'USER_ERASURE_COMPLETED',
+      timestamp: completedTimestamp,
+      deletedAt: completedTimestamp
+    };
+
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, 'USER_ERASURE_COMPLETED', $2, NOW(), $3)`,
-      [userId, JSON.stringify({ deletedAt: new Date().toISOString() }), context.identity?.sourceIp || 'unknown']
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, 'USER_ERASURE_COMPLETED', JSON.stringify(safeDetailsComplete), ipAddress]
     );
 
     // 7. Hard Delete User Data
@@ -139,10 +156,21 @@ exports.handler = async (event, context) => {
     
     // Attempt to log failure (Best effort, might fail if DB is in bad state)
     try {
+      const failedTimestamp = new Date().toISOString();
+      const errorMessage = sanitizeLogInput(error.message);
+      const ipAddress = context.identity?.sourceIp || 'unknown';
+
+      // ✅ FIX: Ensure details object contains required keys
+      const safeDetailsFail = {
+        event_type: 'USER_ERASURE_FAILED',
+        timestamp: failedTimestamp,
+        error: errorMessage
+      };
+
       await client.query(
         `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-         VALUES ($1, 'USER_ERASURE_FAILED', $2, NOW(), $3)`,
-        [userId, JSON.stringify({ error: sanitizeLogInput(error.message) }), context.identity?.sourceIp || 'unknown']
+         VALUES ($1, $2, $3, NOW(), $4)`,
+        [userId, 'USER_ERASURE_FAILED', JSON.stringify(safeDetailsFail), ipAddress]
       );
     } catch (logErr) {
       console.error('[DeleteUser] Failed to log error:', logErr);

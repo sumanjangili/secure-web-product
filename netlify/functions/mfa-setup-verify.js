@@ -123,11 +123,22 @@ exports.handler = async (event, context) => {
       [backupCodeHashes, userId]
     );
 
-    // 9. Log Audit Event
+    // 9. Log Audit Event (FIXED: Ensuring details structure matches DB constraint)
+    const ipAddress = context.identity?.sourceIp || 'unknown';
+    const auditTimestamp = new Date().toISOString();
+
+    // ✅ FIX: Explicitly include event_type and timestamp in the details object
+    const safeDetails = {
+      event_type: 'MFA_SETUP_COMPLETE',
+      timestamp: auditTimestamp,
+      backupCodesCount: COUNT,
+      method: 'totp'
+    };
+
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, 'MFA_SETUP_COMPLETE', $2, NOW(), $3)`,
-      [userId, JSON.stringify({ backupCodesCount: COUNT, method: 'totp' }), context.identity?.sourceIp || 'unknown']
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, 'MFA_SETUP_COMPLETE', JSON.stringify(safeDetails), ipAddress]
     );
 
     // 10. Return Response

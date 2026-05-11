@@ -20,10 +20,6 @@ const pool = new Pool({
 });
 
 // Robust parsing of ADMIN_USER_IDS
-// 1. Check if variable exists
-// 2. Split by comma
-// 3. Trim whitespace from each ID
-// 4. Convert to lowercase for case-insensitive comparison
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS 
   ? process.env.ADMIN_USER_IDS.split(',').map(id => id.trim().toLowerCase()) 
   : [];
@@ -82,7 +78,6 @@ exports.handler = async (event, context) => {
   }
 
   // 4. Authenticate & Check Admin Status
-  // Ensure comparison is robust
   let isAdmin = false;
   const currentUserId = String(userId).trim().toLowerCase();
   
@@ -121,6 +116,7 @@ exports.handler = async (event, context) => {
         if (isNaN(parseInt(filterUserId))) {
           return { statusCode: 400, body: JSON.stringify({ error: 'Invalid user ID filter' }) };
         }
+        // Use $1 for user_id, $2 for limit, $3 for offset
         query = `
           SELECT id, event_type, details, timestamp, ip_address, user_id 
           FROM audit_logs 
@@ -130,12 +126,15 @@ exports.handler = async (event, context) => {
         `;
         params = [filterUserId, safeLimit, safeOffset];
       } else {
+        // FIXED: Use $1 and $2 since there is no user_id filter
+        // This aligns the placeholders with the params array [safeLimit, safeOffset]
         query = `
           SELECT id, event_type, details, timestamp, ip_address, user_id 
           FROM audit_logs 
           ORDER BY timestamp DESC 
-          LIMIT $2 OFFSET $3
+          LIMIT $1 OFFSET $2
         `;
+        // FIXED: Pass params in order matching $1, $2
         params = [safeLimit, safeOffset];
       }
     }

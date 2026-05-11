@@ -75,11 +75,21 @@ exports.handler = async (event, context) => {
 
     const client = await pool.connect();
     try {
-      // 6. Log Audit Event
+      // 6. Log Audit Event (FIXED: Ensuring details structure matches DB constraint)
+      const ipAddress = context.identity?.sourceIp || 'unknown';
+      const auditTimestamp = new Date().toISOString();
+      
+      // ✅ FIX: Explicitly include event_type and timestamp in the details object
+      const safeDetails = {
+        event_type: 'MFA_INITIATED',
+        timestamp: auditTimestamp,
+        method: 'totp'
+      };
+
       await client.query(
         `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-         VALUES ($1, 'MFA_INITIATED', $2, NOW(), $3)`,
-        [userId, JSON.stringify({ method: 'totp' }), context.identity?.sourceIp || 'unknown']
+         VALUES ($1, $2, $3, NOW(), $4)`,
+        [userId, 'MFA_INITIATED', JSON.stringify(safeDetails), ipAddress]
       );
       
       // 7. Store Secret in Database
