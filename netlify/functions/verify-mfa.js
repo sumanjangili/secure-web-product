@@ -208,7 +208,7 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 200,
         headers: {
-          // ✅ CRITICAL: Set the new fully-authenticated cookie
+          // Set the new fully-authenticated cookie
           'Set-Cookie': `auth_token=${newToken}; HttpOnly; ${secureFlag}; SameSite=Strict; Path=/; Max-Age=86400`,
           'Content-Type': 'application/json',
           'Cache-Control': 'no-store, no-cache, must-revalidate, private'
@@ -236,10 +236,10 @@ exports.handler = async (event, context) => {
   }
 };
 
-// ✅ FIXED: Updated logAuditEvent to ensure details structure matches DB constraint
+// Updated logAuditEvent to ensure details structure matches DB constraint
 async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
-    // ✅ FIX: Ensure details object contains required keys
+    // Ensure details object contains required keys
     const safeDetails = {
       event_type: eventType, // Required by constraint
       timestamp: new Date().toISOString(), // Required by constraint
