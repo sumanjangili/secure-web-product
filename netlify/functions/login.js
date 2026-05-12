@@ -20,10 +20,13 @@ if (!dbUrl) {
 } else {
   try {
     // Conditional SSL for local dev vs production
+    // Detect production via NODE_ENV or presence of DATABASE_URL in prod context
+    const isProdEnv = process.env.NODE_ENV === 'production';
+    
     pool = new Pool({ 
       connectionString: dbUrl,
-      ssl: process.env.NODE_ENV === 'production' 
-        ? { rejectUnauthorized: false } 
+      ssl: isProdEnv 
+        ? { rejectUnauthorized: false } // Accept self-signed certs in some cloud DBs
         : false  // Disable SSL for local dev
     });
     console.log('[Login] Database pool initialized.');
@@ -142,13 +145,18 @@ exports.handler = async (event, context) => {
     await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
     // 12. Return Response with BOTH Cookies
-    const isProd = process.env.NODE_ENV === 'production';
+    // ROBUST DETECTION: Check NODE_ENV OR the incoming protocol header
+    // Netlify sets 'x-forwarded-proto' to 'https' for all production traffic
+    const isProd = process.env.NODE_ENV === 'production' || 
+                   (context && context.headers && context.headers['x-forwarded-proto'] === 'https');
+    
     const samesiteFlag = isProd ? 'Strict' : 'Lax'; 
     
-    // Build cookie parts dynamically to avoid empty separators
+    // Build cookie parts dynamically
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
 
+    // Always add 'Secure' flag if detected as production/HTTPS
     if (isProd) {
       authParts.unshift('Secure');
       csrfParts.unshift('Secure');
@@ -157,7 +165,7 @@ exports.handler = async (event, context) => {
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
-    console.log(`[Login] Env: ${process.env.NODE_ENV}, Cookies set successfully.`);
+    console.log(`[Login] Env: ${process.env.NODE_ENV}, Proto: ${context?.headers?.['x-forwarded-proto']}, Detected Prod: ${isProd}, Cookies set successfully.`);
 
     return {
       statusCode: 200,
