@@ -22,20 +22,6 @@
   external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib", "@upstash/redis"]
   included_files = ["netlify/functions/lib/**", "netlify/functions/node_modules/@upstash/**"]
 
-# EXCLUDE API FUNCTIONS FROM REDIRECTS
-[[redirects]]
-  from = "/.netlify/functions/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-  force = true
-
-# Catch-all for SPA (Keep this at the bottom)
 [[redirects]]
   from = "/*"
   to = "/index.html"
