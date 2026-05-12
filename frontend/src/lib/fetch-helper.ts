@@ -46,10 +46,10 @@ export async function secureFetchJson<T = any>(
 ): Promise<T> {
   const { skipCsrf = false, headers = {}, ...restOptions } = options;
 
-  // 1. Prepare Headers
-  const finalHeaders: HeadersInit = {
+  // 1. Prepare Headers - Use Record<string, string> to allow dynamic property assignment
+  const finalHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...headers,
+    ...(headers as Record<string, string>),
   };
 
   // 2. Inject CSRF Token if not skipped
