@@ -57,3 +57,5 @@ coverage
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+!package-lock.json
