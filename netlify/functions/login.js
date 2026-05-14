@@ -11,28 +11,47 @@ const LOCKOUT_TIME_SECONDS = 15 * 60; // 15 minutes
 const RATE_LIMIT_KEY_PREFIX = 'login_rate_limit:';
 const SESSION_DURATION = 86400; // 24 hours in seconds
 
-// --- Database Initialization ---
+// --- CRITICAL: Validate Environment Variables Immediately ---
 const dbUrl = process.env.DATABASE_URL;
-let pool;
+const jwtSecret = process.env.JWT_SECRET;
 
 if (!dbUrl) {
-  console.error('FATAL: DATABASE_URL environment variable is missing.');
-} else {
+  console.error('FATAL: DATABASE_URL is missing. Check Netlify Environment Variables.');
+  // We do not throw here to allow the function to load, but it will fail on first DB call.
+  // Better to log clearly so the user knows why it's failing.
+}
+
+if (!jwtSecret) {
+  console.error('FATAL: JWT_SECRET is missing. Check Netlify Environment Variables.');
+}
+
+// --- Database Initialization ---
+let pool;
+
+if (dbUrl) {
   try {
-    // Conditional SSL for local dev vs production
-    // Detect production via NODE_ENV or presence of DATABASE_URL in prod context
-    const isProdEnv = process.env.NODE_ENV === 'production';
+    // Determine Production Mode:
+    // 1. Check explicit NODE_ENV
+    // 2. Check if running on Netlify (context is usually present in production)
+    // 3. Default to 'production' behavior if uncertain to ensure Secure cookies
+    const isProdEnv = process.env.NODE_ENV === 'production' || 
+                      (process.env.NETLIFY === 'true'); 
     
+    console.log(`[Login] Initializing DB. NODE_ENV: ${process.env.NODE_ENV}, NETLIFY: ${process.env.NETLIFY}, IsProd: ${isProdEnv}`);
+
     pool = new Pool({ 
       connectionString: dbUrl,
       ssl: isProdEnv 
-        ? { rejectUnauthorized: false } // Accept self-signed certs in some cloud DBs
-        : false  // Disable SSL for local dev
+        ? { rejectUnauthorized: false } // Accept self-signed certs for cloud DBs
+        : false  
     });
     console.log('[Login] Database pool initialized.');
   } catch (err) {
     console.error('[Login] Failed to initialize DB pool:', err.message);
+    pool = null; // Prevent further attempts
   }
+} else {
+  pool = null;
 }
 
 exports.handler = async (event, context) => {
@@ -44,7 +63,10 @@ exports.handler = async (event, context) => {
   // 2. Parse Body
   let payload;
   try {
-    payload = JSON.parse(event.body || '{}');
+    // Netlify sometimes sends body as string, sometimes as object depending on config
+    // Ensure we parse it safely
+    const bodyStr = typeof event.body === 'string' ? event.body : JSON.stringify(event.body);
+    payload = JSON.parse(bodyStr || '{}');
   } catch (e) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
@@ -57,18 +79,17 @@ exports.handler = async (event, context) => {
 
   // 3. Database Check
   if (!pool) {
-    console.error('[Login] Aborted: Database not configured.');
+    console.error('[Login] Aborted: Database pool not initialized. Check DATABASE_URL env var.');
     return { statusCode: 500, body: JSON.stringify({ error: 'Server configuration error' }) };
   }
 
   const client = await pool.connect();
   try {
-    // 4. Find User (Constant time delay for security)
+    // 4. Find User
     const userResult = await client.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
 
     if (userResult.rows.length === 0) {
-      // Simulate delay to prevent timing attacks
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500)); // Timing attack prevention
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
 
@@ -124,11 +145,22 @@ exports.handler = async (event, context) => {
     }
 
     // 8. Generate JWT
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: SESSION_DURATION }
-    );
+    if (!jwtSecret) {
+      console.error('[Login] CRITICAL: JWT_SECRET is missing. Cannot generate token.');
+      return { statusCode: 500, body: JSON.stringify({ error: 'Internal server error' }) };
+    }
+
+    let token;
+    try {
+      token = jwt.sign(
+        { userId: user.id, email: user.email },
+        jwtSecret,
+        { expiresIn: SESSION_DURATION }
+      );
+    } catch (jwtErr) {
+      console.error('[Login] JWT Sign Error:', jwtErr.message);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Failed to generate session' }) };
+    }
 
     // 9. Generate CSRF Token
     const csrfToken = crypto.randomBytes(32).toString('hex');
@@ -144,19 +176,14 @@ exports.handler = async (event, context) => {
     // 11. Update Last Login
     await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    // 12. Return Response with BOTH Cookies
-    // ROBUST DETECTION: Check NODE_ENV OR the incoming protocol header
-    // Netlify sets 'x-forwarded-proto' to 'https' for all production traffic
-    const isProd = process.env.NODE_ENV === 'production' || 
-                   (context && context.headers && context.headers['x-forwarded-proto'] === 'https');
-    
+    // 12. Determine Cookie Flags
+    // Logic: If NODE_ENV is 'production' OR we are on Netlify (process.env.NETLIFY), use Secure/Strict
+    const isProd = process.env.NODE_ENV === 'production' || process.env.NETLIFY === 'true';
     const samesiteFlag = isProd ? 'Strict' : 'Lax'; 
     
-    // Build cookie parts dynamically
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
 
-    // Always add 'Secure' flag if detected as production/HTTPS
     if (isProd) {
       authParts.unshift('Secure');
       csrfParts.unshift('Secure');
@@ -165,7 +192,7 @@ exports.handler = async (event, context) => {
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
-    console.log(`[Login] Env: ${process.env.NODE_ENV}, Proto: ${context?.headers?.['x-forwarded-proto']}, Detected Prod: ${isProd}, Cookies set successfully.`);
+    console.log(`[Login] SUCCESS. Env: ${process.env.NODE_ENV}, Netlify: ${process.env.NETLIFY}, IsProd: ${isProd}`);
 
     return {
       statusCode: 200,
@@ -187,7 +214,6 @@ exports.handler = async (event, context) => {
   } catch (error) {
     console.error('[Login] UNCAUGHT ERROR:', error.message);
     console.error('[Login] Stack:', error.stack);
-    // Do not log the full event to avoid leaking sensitive data in logs
     return { statusCode: 500, body: JSON.stringify({ error: 'An unexpected error occurred' }) };
   } finally {
     client.release();
