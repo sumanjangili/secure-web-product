@@ -56,12 +56,26 @@ exports.handler = async (event, context) => {
 };
 
 async function executeHandler(event, context) {
-  // 1. Method Check
+  // 1. Handle CORS Preflight (OPTIONS)
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400'
+      }
+    };
+  }
+
+  // 2. Method Check
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // 2. Parse Body
+  // 3. Parse Body
   let payload;
   try {
     const bodyStr = typeof event.body === 'string' ? event.body : JSON.stringify(event.body);
@@ -75,7 +89,7 @@ async function executeHandler(event, context) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Email and password required' }) };
   }
 
-  // 3. Database Check
+  // 4. Database Check
   if (!pool) {
     console.error('[Login] DB Pool null');
     return { statusCode: 500, body: JSON.stringify({ error: 'Server Config Error' }) };
@@ -83,7 +97,7 @@ async function executeHandler(event, context) {
 
   const client = await pool.connect();
   try {
-    // 4. Find User
+    // 5. Find User
     const userResult = await client.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
     if (userResult.rows.length === 0) {
       await new Promise(r => setTimeout(r, 500)); // Timing attack prevention
@@ -91,7 +105,7 @@ async function executeHandler(event, context) {
     }
     const user = userResult.rows[0];
 
-    // 5. Rate Limiting
+    // 6. Rate Limiting
     const rateKey = `${RATE_LIMIT_KEY_PREFIX}${user.id}`;
     let attempts = 0;
     let rateLimitExceeded = false;
@@ -118,7 +132,7 @@ async function executeHandler(event, context) {
       };
     }
 
-    // 6. Verify Password
+    // 7. Verify Password
     const isValid = await argon2.verify(user.password_hash, password);
     if (!isValid) {
       const ipAddress = context?.identity?.sourceIp || 'unknown';
@@ -130,17 +144,17 @@ async function executeHandler(event, context) {
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
 
-    // 7. Success: Reset Rate Limit
+    // 8. Success: Reset Rate Limit
     try { await redis.del(rateKey); } catch (e) { console.warn('Redis del failed'); }
 
-    // 8. Generate JWT
+    // 9. Generate JWT
     if (!jwtSecret) return { statusCode: 500, body: JSON.stringify({ error: 'No JWT Secret' }) };
     const token = jwt.sign({ userId: user.id, email: user.email }, jwtSecret, { expiresIn: SESSION_DURATION });
 
-    // 9. Generate CSRF Token
+    // 10. Generate CSRF Token
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
-    // 10. Audit Log (ISOLATED: Must not crash login if it fails)
+    // 11. Audit Log (ISOLATED)
     const ipAddress = context?.identity?.sourceIp || 'unknown';
     try {
       await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { 
@@ -149,33 +163,45 @@ async function executeHandler(event, context) {
       }, ipAddress);
     } catch (auditErr) {
       console.error('[Login] Audit Log FAILED (Non-Fatal):', auditErr.message);
-      // Continue anyway!
     }
 
-    // 11. Update Last Login (ISOLATED)
+    // 12. Update Last Login (ISOLATED)
     try {
       await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
     } catch (updateErr) {
       console.error('[Login] Update Last Login FAILED (Non-Fatal):', updateErr.message);
-      // Continue anyway!
     }
 
-    // 12. Prepare Cookies (TEST: Lax, No Secure)
-    const samesiteFlag = 'Lax';
+    // 13. Prepare Cookies (FIXED: Secure + Lax)
+    const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
+    const samesiteFlag = 'Lax'; 
+    
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
+
+    // CRITICAL: Add 'Secure' flag because Netlify is HTTPS
+    if (isProd) {
+      authParts.unshift('Secure');
+      csrfParts.unshift('Secure');
+    }
     
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
-    console.log(`[Login] PREPARING RESPONSE. Cookies: ${cookie1.substring(0, 20)}...`);
+    console.log(`[Login] PREPARING RESPONSE. Cookies: ${cookie1.substring(0, 20)}... Secure=${isProd}`);
 
     const response = {
       statusCode: 200,
       headers: {
         'Set-Cookie': [cookie1, cookie2],
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
+        // CORS Headers
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        // Security Headers
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'X-Frame-Options': 'DENY',
         'X-Content-Type-Options': 'nosniff'
       },
@@ -201,12 +227,10 @@ async function executeHandler(event, context) {
 
 /**
  * Logs audit events. 
- * FIXED: Removes 'timestamp' from details to avoid constraint violations 
- * if the table has a separate timestamp column.
+ * FIXED: Removes 'timestamp' from details to avoid constraint violations.
  */
 async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
-    // Remove timestamp from details if the table has a separate timestamp column
     const { timestamp, ...safeDetails } = details;
     
     await client.query(
@@ -216,6 +240,6 @@ async function logAuditEvent(client, userId, eventType, details, ipAddress) {
     );
   } catch (err) {
     console.error('[Audit] Failed:', err.message);
-    // Do NOT re-throw. This function is non-critical.
+    // Do NOT re-throw.
   }
 }
