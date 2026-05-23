@@ -7,16 +7,18 @@ const redis = require('./lib/redis');
 
 // --- Configuration ---
 const MAX_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_TIME_SECONDS = 15 * 60;
+const LOCKOUT_TIME_SECONDS = 15 * 60; // 15 minutes
 const RATE_LIMIT_KEY_PREFIX = 'login_rate_limit:';
-const SESSION_DURATION = 86400;
+const SESSION_DURATION = 86400; // 24 hours
 
+// --- Environment Validation ---
 const dbUrl = process.env.DATABASE_URL;
 const jwtSecret = process.env.JWT_SECRET;
 
 if (!dbUrl) console.error('FATAL: DATABASE_URL missing');
 if (!jwtSecret) console.error('FATAL: JWT_SECRET missing');
 
+// --- Database Initialization ---
 let pool;
 if (dbUrl) {
   try {
@@ -34,9 +36,9 @@ if (dbUrl) {
 }
 
 exports.handler = async (event, context) => {
-  // Add a global timeout to prevent hanging
+  // Global timeout to prevent hanging functions
   const timeoutPromise = new Promise((_, reject) => 
-    setTimeout(() => reject(new Error('Function timeout')), 10000) // 10s timeout
+    setTimeout(() => reject(new Error('Function timeout')), 10000)
   );
 
   try {
@@ -54,10 +56,12 @@ exports.handler = async (event, context) => {
 };
 
 async function executeHandler(event, context) {
+  // 1. Method Check
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
+  // 2. Parse Body
   let payload;
   try {
     const bodyStr = typeof event.body === 'string' ? event.body : JSON.stringify(event.body);
@@ -71,6 +75,7 @@ async function executeHandler(event, context) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Email and password required' }) };
   }
 
+  // 3. Database Check
   if (!pool) {
     console.error('[Login] DB Pool null');
     return { statusCode: 500, body: JSON.stringify({ error: 'Server Config Error' }) };
@@ -81,7 +86,7 @@ async function executeHandler(event, context) {
     // 4. Find User
     const userResult = await client.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
     if (userResult.rows.length === 0) {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 500)); // Timing attack prevention
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
     const user = userResult.rows[0];
@@ -117,7 +122,11 @@ async function executeHandler(event, context) {
     const isValid = await argon2.verify(user.password_hash, password);
     if (!isValid) {
       const ipAddress = context?.identity?.sourceIp || 'unknown';
-      await logAuditEvent(client, user.id, 'LOGIN_FAILED', { email }, ipAddress);
+      // Log failure (isolated)
+      try {
+        await logAuditEvent(client, user.id, 'LOGIN_FAILED', { email }, ipAddress);
+      } catch (e) { console.warn('Audit log failed on login failure'); }
+      
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
 
@@ -128,22 +137,34 @@ async function executeHandler(event, context) {
     if (!jwtSecret) return { statusCode: 500, body: JSON.stringify({ error: 'No JWT Secret' }) };
     const token = jwt.sign({ userId: user.id, email: user.email }, jwtSecret, { expiresIn: SESSION_DURATION });
 
-    // 9. CSRF
+    // 9. Generate CSRF Token
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
-    // 10. Audit
+    // 10. Audit Log (ISOLATED: Must not crash login if it fails)
     const ipAddress = context?.identity?.sourceIp || 'unknown';
-    await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { email, mfaRequired: user.mfa_enabled }, ipAddress);
+    try {
+      await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { 
+        email, 
+        mfaRequired: user.mfa_enabled || false
+      }, ipAddress);
+    } catch (auditErr) {
+      console.error('[Login] Audit Log FAILED (Non-Fatal):', auditErr.message);
+      // Continue anyway!
+    }
 
-    // 11. Update Login
-    await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+    // 11. Update Last Login (ISOLATED)
+    try {
+      await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+    } catch (updateErr) {
+      console.error('[Login] Update Last Login FAILED (Non-Fatal):', updateErr.message);
+      // Continue anyway!
+    }
 
-    // 12. Cookies (TEST: Lax, No Secure)
+    // 12. Prepare Cookies (TEST: Lax, No Secure)
     const samesiteFlag = 'Lax';
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     
-    // NO Secure flag for this test
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
@@ -178,14 +199,23 @@ async function executeHandler(event, context) {
   }
 }
 
+/**
+ * Logs audit events. 
+ * FIXED: Removes 'timestamp' from details to avoid constraint violations 
+ * if the table has a separate timestamp column.
+ */
 async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
+    // Remove timestamp from details if the table has a separate timestamp column
+    const { timestamp, ...safeDetails } = details;
+    
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
        VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, eventType, JSON.stringify(details), ipAddress || 'unknown']
+      [userId, eventType, JSON.stringify(safeDetails), ipAddress || 'unknown']
     );
   } catch (err) {
     console.error('[Audit] Failed:', err.message);
+    // Do NOT re-throw. This function is non-critical.
   }
 }
