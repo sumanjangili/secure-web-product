@@ -179,16 +179,18 @@ exports.handler = async (event, context) => {
     // 11. Update Last Login
     await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    // 12. Determine Cookie Flags (CRITICAL FIX: SameSite=Lax)
+    // 12. Determine Cookie Flags (Force SameSite=None for reliability)
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
     
-    // CHANGED: Use 'Lax' instead of 'Strict' to allow cookies on fetch/AJAX requests
-    const samesiteFlag = 'Lax'; 
+    // Use 'None' and 'Secure' together. This is the only way to guarantee cookies work
+    // across all fetch scenarios, including potential subdomain/redirect issues.
+    // Note: 'None' REQUIRES 'Secure'.
+    const samesiteFlag = 'None'; 
     
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
 
-    // ALWAYS set Secure if we are in production (Netlify forces HTTPS)
+    // MUST set Secure if SameSite=None
     if (isProd) {
       authParts.unshift('Secure');
       csrfParts.unshift('Secure');
