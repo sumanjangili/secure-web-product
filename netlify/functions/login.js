@@ -7,55 +7,57 @@ const redis = require('./lib/redis');
 
 // --- Configuration ---
 const MAX_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_TIME_SECONDS = 15 * 60; // 15 minutes
+const LOCKOUT_TIME_SECONDS = 15 * 60;
 const RATE_LIMIT_KEY_PREFIX = 'login_rate_limit:';
-const SESSION_DURATION = 86400; // 24 hours in seconds
+const SESSION_DURATION = 86400;
 
-// --- CRITICAL: Validate Environment Variables Immediately ---
 const dbUrl = process.env.DATABASE_URL;
 const jwtSecret = process.env.JWT_SECRET;
 
-if (!dbUrl) {
-  console.error('FATAL: DATABASE_URL is missing. Check Netlify Environment Variables.');
-}
+if (!dbUrl) console.error('FATAL: DATABASE_URL missing');
+if (!jwtSecret) console.error('FATAL: JWT_SECRET missing');
 
-if (!jwtSecret) {
-  console.error('FATAL: JWT_SECRET is missing. Check Netlify Environment Variables.');
-}
-
-// --- Database Initialization ---
 let pool;
-
 if (dbUrl) {
   try {
-    // ROBUST PRODUCTION DETECTION:
-    // Checks if NODE_ENV is 'production' OR if the NETLIFY env var exists (truthy check)
     const isProdEnv = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
-    
-    console.log(`[Login] Initializing DB. NODE_ENV: ${process.env.NODE_ENV}, NETLIFY: ${process.env.NETLIFY}, IsProd: ${isProdEnv}`);
-
+    console.log(`[Login] Initializing DB. IsProd: ${isProdEnv}`);
     pool = new Pool({ 
       connectionString: dbUrl,
-      ssl: isProdEnv 
-        ? { rejectUnauthorized: false } // Accept self-signed certs for cloud DBs
-        : false  
+      ssl: isProdEnv ? { rejectUnauthorized: false } : false  
     });
     console.log('[Login] Database pool initialized.');
   } catch (err) {
-    console.error('[Login] Failed to initialize DB pool:', err.message);
+    console.error('[Login] Failed to init DB:', err.message);
     pool = null;
   }
-} else {
-  pool = null;
 }
 
 exports.handler = async (event, context) => {
-  // 1. Method Check
+  // Add a global timeout to prevent hanging
+  const timeoutPromise = new Promise((_, reject) => 
+    setTimeout(() => reject(new Error('Function timeout')), 10000) // 10s timeout
+  );
+
+  try {
+    return await Promise.race([
+      executeHandler(event, context),
+      timeoutPromise
+    ]);
+  } catch (err) {
+    console.error('[Login] CRITICAL FAILURE:', err.message);
+    return {
+      statusCode: 502,
+      body: JSON.stringify({ error: 'Gateway Timeout or Internal Error' })
+    };
+  }
+};
+
+async function executeHandler(event, context) {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // 2. Parse Body
   let payload;
   try {
     const bodyStr = typeof event.body === 'string' ? event.body : JSON.stringify(event.body);
@@ -65,148 +67,94 @@ exports.handler = async (event, context) => {
   }
 
   const { email, password } = payload;
-
   if (!email || !password) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Email and password are required' }) };
+    return { statusCode: 400, body: JSON.stringify({ error: 'Email and password required' }) };
   }
 
-  // 3. Database Check
   if (!pool) {
-    console.error('[Login] Aborted: Database pool not initialized. Check DATABASE_URL env var.');
-    return { statusCode: 500, body: JSON.stringify({ error: 'Server configuration error' }) };
+    console.error('[Login] DB Pool null');
+    return { statusCode: 500, body: JSON.stringify({ error: 'Server Config Error' }) };
   }
 
   const client = await pool.connect();
   try {
     // 4. Find User
     const userResult = await client.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
-
     if (userResult.rows.length === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 500)); // Timing attack prevention
+      await new Promise(r => setTimeout(r, 500));
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
-
     const user = userResult.rows[0];
 
-    // 5. Rate Limiting Check (SIMPLIFIED & SAFE)
+    // 5. Rate Limiting
     const rateKey = `${RATE_LIMIT_KEY_PREFIX}${user.id}`;
     let attempts = 0;
     let rateLimitExceeded = false;
     let ttl = LOCKOUT_TIME_SECONDS;
 
     try {
-      // Get current attempts
       const attemptsStr = await redis.get(rateKey);
       attempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
-
       if (attempts >= MAX_LOGIN_ATTEMPTS) {
         rateLimitExceeded = true;
         ttl = await redis.ttl(rateKey).catch(() => LOCKOUT_TIME_SECONDS);
       } else {
-        // Increment attempts
         await redis.incr(rateKey);
         await redis.expire(rateKey, LOCKOUT_TIME_SECONDS);
       }
     } catch (redisErr) {
-      console.warn('[Login] Redis error (non-fatal):', redisErr.message);
-      // If Redis fails, we allow the login to proceed (Fail-Open) to avoid locking users out
-      // but we log the warning.
+      console.warn('[Login] Redis error:', redisErr.message);
     }
 
     if (rateLimitExceeded) {
-      const ipAddress = context?.identity?.sourceIp || 'unknown';
-      await logAuditEvent(client, user.id, 'LOGIN_RATE_LIMITED', { email, attempts }, ipAddress);
-      
       return {
         statusCode: 429,
-        body: JSON.stringify({ 
-          error: 'Too many login attempts. Please try again later.', 
-          retryAfter: ttl > 0 ? ttl : LOCKOUT_TIME_SECONDS 
-        }),
+        body: JSON.stringify({ error: 'Too many attempts', retryAfter: ttl })
       };
     }
 
     // 6. Verify Password
     const isValid = await argon2.verify(user.password_hash, password);
-
     if (!isValid) {
-      // Note: If Redis failed earlier, we didn't increment. 
-      // If Redis worked, we already incremented.
-      // This is acceptable for rate limiting logic.
-      
       const ipAddress = context?.identity?.sourceIp || 'unknown';
       await logAuditEvent(client, user.id, 'LOGIN_FAILED', { email }, ipAddress);
-      
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
 
     // 7. Success: Reset Rate Limit
-    try {
-      await redis.del(rateKey);
-    } catch (redisErr) {
-      console.warn('[Login] Redis del failed:', redisErr.message);
-    }
+    try { await redis.del(rateKey); } catch (e) { console.warn('Redis del failed'); }
 
     // 8. Generate JWT
-    if (!jwtSecret) {
-      console.error('[Login] CRITICAL: JWT_SECRET is missing. Cannot generate token.');
-      return { statusCode: 500, body: JSON.stringify({ error: 'Internal server error' }) };
-    }
+    if (!jwtSecret) return { statusCode: 500, body: JSON.stringify({ error: 'No JWT Secret' }) };
+    const token = jwt.sign({ userId: user.id, email: user.email }, jwtSecret, { expiresIn: SESSION_DURATION });
 
-    let token;
-    try {
-      token = jwt.sign(
-        { userId: user.id, email: user.email },
-        jwtSecret,
-        { expiresIn: SESSION_DURATION }
-      );
-    } catch (jwtErr) {
-      console.error('[Login] JWT Sign Error:', jwtErr.message);
-      return { statusCode: 500, body: JSON.stringify({ error: 'Failed to generate session' }) };
-    }
-
-    // 9. Generate CSRF Token
+    // 9. CSRF
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
-    // 10. Audit Log
+    // 10. Audit
     const ipAddress = context?.identity?.sourceIp || 'unknown';
-    await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { 
-      email, 
-      mfaRequired: user.mfa_enabled || false,
-      timestamp: new Date().toISOString() 
-    }, ipAddress);
+    await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { email, mfaRequired: user.mfa_enabled }, ipAddress);
 
-    // 11. Update Last Login
+    // 11. Update Login
     await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    // 12. Determine Cookie Flags (CRITICAL: SameSite=None + Secure)
-    const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
-    
-    // MUST use 'None' for fetch/AJAX requests on modern browsers
-    // MUST use 'Secure' when 'None' is used
-    const samesiteFlag = 'Lax'; 
-    
+    // 12. Cookies (TEST: Lax, No Secure)
+    const samesiteFlag = 'Lax';
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
-
-    // ALWAYS add 'Secure' in production (Netlify is HTTPS)
-    // If you are testing locally (HTTP), remove this block to avoid blocking cookies
-    // if (isProd) {
-    //  authParts.unshift('Secure');
-    //  csrfParts.unshift('Secure');
-    // }
-
+    
+    // NO Secure flag for this test
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
-    console.log(`[Login] Setting Cookies. SameSite=${samesiteFlag}, Secure=false (TEST)`);
+    console.log(`[Login] PREPARING RESPONSE. Cookies: ${cookie1.substring(0, 20)}...`);
 
-    return {
+    const response = {
       statusCode: 200,
       headers: {
         'Set-Cookie': [cookie1, cookie2],
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+        'Cache-Control': 'no-store',
         'X-Frame-Options': 'DENY',
         'X-Content-Type-Options': 'nosniff'
       },
@@ -215,32 +163,29 @@ exports.handler = async (event, context) => {
         userId: user.id,
         mfaEnabled: user.mfa_enabled || false,
         message: user.mfa_enabled ? 'MFA required' : 'Login successful'
-      }),
+      })
     };
 
+    console.log('[Login] RETURNING RESPONSE.');
+    return response;
+
   } catch (error) {
-    console.error('[Login] UNCAUGHT ERROR:', error.message);
-    console.error('[Login] Stack:', error.stack);
-    return { statusCode: 500, body: JSON.stringify({ error: 'An unexpected error occurred' }) };
+    console.error('[Login] UNCAUGHT ERROR:', error.message, error.stack);
+    return { statusCode: 500, body: JSON.stringify({ error: 'Unexpected Error' }) };
   } finally {
+    console.log('[Login] Releasing DB client.');
     client.release();
   }
-};
+}
 
 async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
-    const safeDetails = {
-      event_type: eventType,
-      timestamp: new Date().toISOString(),
-      ...details
-    };
-
     await client.query(
       `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
        VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, eventType, JSON.stringify(safeDetails), ipAddress || 'unknown']
+      [userId, eventType, JSON.stringify(details), ipAddress || 'unknown']
     );
   } catch (err) {
-    console.error('[Audit Log] Failed to write:', err.message);
+    console.error('[Audit] Failed:', err.message);
   }
 }
