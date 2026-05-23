@@ -31,8 +31,9 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
-  external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib", "@upstash/redis"]
-  included_files = ["netlify/functions/lib/**", "netlify/functions/node_modules/@upstash/**"]
+  # external_node_modules = ["pg", "argon2", "jsonwebtoken", "otplib", "@upstash/redis"]
+  # included_files = ["netlify/functions/lib/**", "netlify/functions/node_modules/@upstash/**"]
+  included_files = ["netlify/functions/lib/**"]
 
 [[redirects]]
   from = "/*"
