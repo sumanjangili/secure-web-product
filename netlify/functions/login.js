@@ -58,10 +58,13 @@ exports.handler = async (event, context) => {
 async function executeHandler(event, context) {
   // 1. Handle CORS Preflight (OPTIONS)
   if (event.httpMethod === 'OPTIONS') {
+    const origin = event.headers.origin || '*';
+    const allowedOrigin = origin === '*' ? '*' : origin;
+
     return {
       statusCode: 204,
       headers: {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': allowedOrigin,
         'Access-Control-Allow-Credentials': 'true',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
@@ -179,7 +182,6 @@ async function executeHandler(event, context) {
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
 
-    // CRITICAL: Add 'Secure' flag because Netlify is HTTPS
     if (isProd) {
       authParts.unshift('Secure');
       csrfParts.unshift('Secure');
@@ -188,18 +190,24 @@ async function executeHandler(event, context) {
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
-    console.log(`[Login] PREPARING RESPONSE. Cookies: ${cookie1.substring(0, 20)}... Secure=${isProd}`);
+    // Get the origin from the request headers
+    const origin = event.headers.origin || '*';
+    // If origin is missing (e.g., postman), use '*' but be careful with credentials
+    const allowedOrigin = origin === '*' ? '*' : origin;
+
+    console.log(`[Login] PREPARING RESPONSE. Origin: ${origin}, Allowed: ${allowedOrigin}`);
 
     const response = {
       statusCode: 200,
       headers: {
         'Set-Cookie': [cookie1, cookie2],
         'Content-Type': 'application/json',
-        // CORS Headers
-        'Access-Control-Allow-Origin': '*',
+        // CORRECT CORS: Match the origin exactly
+        'Access-Control-Allow-Origin': allowedOrigin,
         'Access-Control-Allow-Credentials': 'true',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400',
         // Security Headers
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'X-Frame-Options': 'DENY',
