@@ -184,22 +184,22 @@ exports.handler = async (event, context) => {
     
     // MUST use 'None' for fetch/AJAX requests on modern browsers
     // MUST use 'Secure' when 'None' is used
-    const samesiteFlag = 'None'; 
+    const samesiteFlag = 'Lax'; 
     
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
 
     // ALWAYS add 'Secure' in production (Netlify is HTTPS)
     // If you are testing locally (HTTP), remove this block to avoid blocking cookies
-    if (isProd) {
-      authParts.unshift('Secure');
-      csrfParts.unshift('Secure');
-    }
+    // if (isProd) {
+    //  authParts.unshift('Secure');
+    //  csrfParts.unshift('Secure');
+    // }
 
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
-    console.log(`[Login] Setting Cookies. SameSite=${samesiteFlag}, Secure=${isProd}`);
+    console.log(`[Login] Setting Cookies. SameSite=${samesiteFlag}, Secure=false (TEST)`);
 
     return {
       statusCode: 200,
