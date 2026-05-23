@@ -179,18 +179,18 @@ exports.handler = async (event, context) => {
     // 11. Update Last Login
     await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    // 12. Determine Cookie Flags (Force SameSite=None for reliability)
+    // 12. Determine Cookie Flags (CRITICAL: SameSite=None + Secure)
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
     
-    // Use 'None' and 'Secure' together. This is the only way to guarantee cookies work
-    // across all fetch scenarios, including potential subdomain/redirect issues.
-    // Note: 'None' REQUIRES 'Secure'.
+    // MUST use 'None' for fetch/AJAX requests on modern browsers
+    // MUST use 'Secure' when 'None' is used
     const samesiteFlag = 'None'; 
     
     const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
     const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
 
-    // MUST set Secure if SameSite=None
+    // ALWAYS add 'Secure' in production (Netlify is HTTPS)
+    // If you are testing locally (HTTP), remove this block to avoid blocking cookies
     if (isProd) {
       authParts.unshift('Secure');
       csrfParts.unshift('Secure');
@@ -199,7 +199,7 @@ exports.handler = async (event, context) => {
     const cookie1 = authParts.join('; ');
     const cookie2 = csrfParts.join('; ');
 
-    console.log(`[Login] SUCCESS. Env: ${process.env.NODE_ENV}, Netlify: ${process.env.NETLIFY}, IsProd: ${isProd}`);
+    console.log(`[Login] Setting Cookies. SameSite=${samesiteFlag}, Secure=${isProd}`);
 
     return {
       statusCode: 200,

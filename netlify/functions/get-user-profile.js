@@ -36,7 +36,7 @@ exports.handler = async (event, context) => {
       return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required' }) };
     }
 
-    const cookiePairs = cookies.split(';');
+    const cookiePairs = cookies.split('; ');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
     
     if (!authTokenPair) {
