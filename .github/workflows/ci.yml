@@ -35,10 +35,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ---------- Debug ----------
-      - name: List installed packages
-        run: npm ls --depth=0
-        
+      # ---------- Verify scripts exist ----------
+      # FIX: Fail fast with a clear message if scripts are missing
+      - name: Verify npm scripts exist
+        run: |
+          echo "Checking required scripts in package.json..."
+          for script in lint type-check test build; do
+            if ! npm run --silent | grep -q "\b${script}\b"; then
+              echo "::error::Missing npm script: '${script}'"
+              echo "::error::Add this to frontend/package.json scripts:"
+              echo "::error::  \"${script}\": \"<command>\""
+              exit 1
+            fi
+            echo "✅ Found script: ${script}"
+          done
+
       # ---------- Lint ----------
       - name: Run ESLint
         run: npm run lint
@@ -60,7 +71,7 @@ jobs:
         run: npm audit --production --audit-level=high
         continue-on-error: true
 
-      # ---------- Optional: Deploy preview ----------
+      # ---------- Deploy preview ----------
       - name: Deploy to Netlify (preview)
         if: github.event_name == 'pull_request'
         uses: nwtgck/actions-netlify@v2
@@ -70,11 +81,3 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-
-      # ---------- Optional: CodeQL (Uncomment to enable) ----------
-      # - name: Initialize CodeQL
-      #   uses: github/codeql-action/init@v2
-      #   with:
-      #     languages: javascript
-      # - name: Perform CodeQL Analysis
-      #   uses: github/codeql-action/analyze@v2

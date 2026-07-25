@@ -95,3 +95,5 @@ netlify/functions/*.zip
 # Ensure docs are tracked
 !docs/
 !docs/*.md
+frontend/dist/
+*.tgz
