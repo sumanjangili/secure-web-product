@@ -157,6 +157,10 @@ function createMockRedis() {
     on: (event, callback) => {}, 
     connect: async () => {}, 
     quit: async () => {}, 
+
+    ping: async () => {
+      return 'PONG';
+    },
     
     _clear: () => {
       store.clear();
