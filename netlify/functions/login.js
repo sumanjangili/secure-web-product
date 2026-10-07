@@ -207,19 +207,30 @@ async function executeHandler(event, context) {
       console.error('[Login] Update Last Login FAILED (Ignored):', updateErr.message);
     }
 
-    // 13. Prepare Cookies
-const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
-const samesiteFlag = isProd ? 'None' : 'Lax';  // CRITICAL: 'None' for HTTPS cross-origin
+    // 13. Prepare Cookies (FIXED: Secure + SameSite=None for production)
+// ================================================
+// CRITICAL COOKIE CONFIGURATION FOR PRODUCTION:
+// - SameSite=None: Required for cross-origin HTTPS (frontend ≠ Netlify Functions)
+// - Secure flag: Only send cookies over HTTPS
+// - HttpOnly: Prevent JavaScript access (XSS protection)
+// - Path=/: Available site-wide
+// - Max-Age: 24-hour sessions
+// ================================================================
 
-// Generate both cookies
+const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
+const samesiteFlag = isProd ? 'None' : 'Lax';  // Lax for dev, None for production HTTPS cross-origin
+
+// Generate both cookies with proper attributes
 const authCookie = `auth_token=${token}; HttpOnly; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
 const csrfCookie = `csrf_token=${csrfToken}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
 
+// Debug logging - REMOVE in production or keep for troubleshooting
 console.log(`[Login] Production mode: ${isProd}`);
-console.log(`[Login] SameSite: ${samesiteFlag}`);
-console.log(`[Login] Auth cookie: ${authCookie.substring(0, 100)}...`);
-console.log(`[Login] CSRF cookie: ${csrfCookie.substring(0, 100)}...`);
+console.log(`[Login] SameSite setting: ${samesiteFlag}`);
+console.log(`[Login] Auth cookie (truncated): ${authCookie.substring(0, 100)}...`);
+console.log(`[Login] CSRF cookie (truncated): ${csrfCookie.substring(0, 100)}...`);
 
+// Origin validation for CORS
 const origin = event.headers.origin;
 const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
   ? origin 
@@ -230,10 +241,11 @@ return {
   headers: {
     'Set-Cookie': `${authCookie}, ${csrfCookie}`,  // Combined into single header
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': allowedOrigin,  // CRITICAL: Must match frontend origin exactly
-    'Access-Control-Allow-Credentials': 'true',    // CRITICAL: Required for credentials mode
+    'Access-Control-Allow-Origin': allowedOrigin,  // Must match frontend origin exactly
+    'Access-Control-Allow-Credentials': 'true',    // Required when using credentials: include
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+    'Access-Control-Max-Age': '86400',
     'Cache-Control': 'no-store, no-cache, must-revalidate, private',
     'X-Frame-Options': 'DENY',
     'X-Content-Type-Options': 'nosniff'

@@ -2,40 +2,79 @@
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
-const { validateCsrf } = require('./_middleware/csrf-check'); // Import CSRF validator
+const { validateCsrf } = require('./_middleware/csrf-check');
 
-// --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const RATE_LIMIT_KEY_PREFIX = 'secure_data_save:';
-const MAX_SAVES_PER_MINUTE = 10; // Prevent spam/DoS
-const RATE_LIMIT_WINDOW = 60; // 1 minute
-const MAX_PAYLOAD_SIZE = 1024 * 1024; // 1MB limit for ciphertext (adjust as needed)
+const MAX_SAVES_PER_MINUTE = 10;
+const RATE_LIMIT_WINDOW = 60;
+const MAX_PAYLOAD_SIZE = 1024 * 1024; // 1MB limit
 
-// Initialize Pool with SSL for Neon/Cloud Postgres
 const pool = new Pool({ 
   connectionString: dbUrl,
   ssl: process.env.NODE_ENV === 'production' 
     ? { rejectUnauthorized: false }
-    : false // Disable SSL for local dev
+    : false
 });
 
-// Helper to validate base64-like strings (common for encrypted data)
-const isValidEncodedString = (str) => {
-  // Allows alphanumeric, +, /, =, and - _ (for URL safe base64)
-  return /^[A-Za-z0-9+/=_-]+$/.test(str);
-};
+if (!dbUrl) {
+  console.error('FATAL: DATABASE_URL environment variable is missing.');
+}
+
+/**
+ * Logs audit events with GUARANTEED constraint compliance.
+ * CRITICAL: The 'details' JSON MUST contain:
+ * - event_type: STRING (top-level field in details)
+ * - timestamp: STRING (top-level field in details)
+ */
+async function logAuditEvent(client, userId, eventType, details, ipAddress) {
+  try {
+    const compliantDetails = {
+      event_type: String(eventType),           // REQUIRED by chk_audit_details_structure
+      timestamp: new Date().toISOString(),     // REQUIRED by chk_audit_details_structure (as STRING)
+      ...(details || {}),
+      ip_address: ipAddress || 'unknown'
+    };
+
+    await client.query(
+      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address) 
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, eventType, JSON.stringify(compliantDetails), ipAddress || 'unknown']
+    );
+  } catch (err) {
+    console.error(`[Audit] NON-FATAL: ${eventType} - ${err.message}`);
+  }
+}
 
 exports.handler = async (event, context) => {
-  // 1. Method Check
+  // 1. Handle CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const origin = event.headers.origin || '*';
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400'
+      }
+    };
+  }
+
+  // 2. Method Check
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // 2. CSRF Check (CRITICAL)
+  // 3. CSRF Check (CRITICAL - state-changing operation)
   const csrfError = validateCsrf(event);
-  if (csrfError) return csrfError;
+  if (csrfError) {
+    console.error('[SaveSecureData] CSRF validation failed:', csrfError.body);
+    return csrfError;
+  }
 
-  // 3. Rate Limiting Check
+  // 4. Extract and Verify Auth Token
   let userId;
   try {
     const cookies = event.headers.cookie;
@@ -61,6 +100,7 @@ exports.handler = async (event, context) => {
     return { statusCode: 401, body: JSON.stringify({ error: 'Invalid or expired session' }) };
   }
 
+  // 5. Rate Limiting Check
   const rateKey = `${RATE_LIMIT_KEY_PREFIX}${userId}`;
   let attempts = 0;
   
@@ -82,7 +122,7 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // 4. Parse Body
+  // 6. Parse Body
   let payload;
   try {
     payload = JSON.parse(event.body || '{}');
@@ -92,56 +132,53 @@ exports.handler = async (event, context) => {
 
   const { ciphertext, salt, iv } = payload;
   
-  // 5. Validate Encryption Components
-  // Strict validation to prevent malformed data and potential DoS
+  // 7. Validate Encryption Components
   if (!ciphertext || typeof ciphertext !== 'string' || ciphertext.trim() === '') {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing or invalid ciphertext' }) };
   }
   if (ciphertext.length > MAX_PAYLOAD_SIZE) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Ciphertext too large' }) };
   }
-  if (!isValidEncodedString(ciphertext)) {
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(ciphertext)) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid ciphertext format' }) };
   }
 
   if (!salt || typeof salt !== 'string' || salt.trim() === '') {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing or invalid salt' }) };
   }
-  if (!isValidEncodedString(salt)) {
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(salt)) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid salt format' }) };
   }
 
   if (!iv || typeof iv !== 'string' || iv.trim() === '') {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing or invalid IV' }) };
   }
-  if (!isValidEncodedString(iv)) {
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(iv)) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid IV format' }) };
   }
 
   const client = await pool.connect();
   try {
-    // 6. Insert Encrypted Blob
-    // Ensure 'secure_data' table exists with columns: user_id, ciphertext, salt, iv, created_at
+    // 8. Insert Encrypted Blob (with public. schema prefix)
     await client.query(
-      `INSERT INTO secure_data (user_id, ciphertext, salt, iv, created_at) 
+      `INSERT INTO public.secure_data (user_id, ciphertext, salt, iv, created_at) 
        VALUES ($1, $2, $3, $4, NOW())`,
       [userId, ciphertext, salt, iv]
     );
 
-    // 7. Log Event
-    // Sanitized details: only safe metadata (size, type)
-    await client.query(
-      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, 'SECURE_TICKET_CREATED', JSON.stringify({
-        event_type: 'SECURE_TICKET_CREATED', 
+    // 9. Log Event (COMPLIANT with audit constraints)
+    const ipAddress = context.identity?.sourceIp || 'unknown';
+    
+    try {
+      await logAuditEvent(client, userId, 'SECURE_TICKET_CREATED', { 
         size: ciphertext.length, 
-        type: 'contact_form',
-        timestamp: new Date().toISOString()
-      }), context.identity?.sourceIp || 'unknown']
-    );
+        type: 'contact_form'
+      }, ipAddress);
+    } catch (auditErr) {
+      console.error('[SaveSecureData] Audit FAILED (ignored):', auditErr.message);
+    }
 
-    // 8. Increment Rate Limit
+    // 10. Increment Rate Limit
     try {
       await redis.incr(rateKey);
       await redis.expire(rateKey, RATE_LIMIT_WINDOW);
@@ -149,12 +186,20 @@ exports.handler = async (event, context) => {
       console.warn('[SaveSecureData] Redis incr failed:', redisErr.message);
     }
 
+    const origin = event.headers.origin;
+    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
+      ? origin 
+      : 'https://app.indoscient.in';
+
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': allowedOrigin,
+        'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-        'X-Content-Type-Options': 'nosniff'
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY'
       },
       body: JSON.stringify({ 
         success: true, 
