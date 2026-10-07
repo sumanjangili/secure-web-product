@@ -43,9 +43,8 @@ exports.handler = async (event, context) => {
 
   // 3. Extract and Verify Auth Token FIRST (Before CSRF)
   let userId = null;
-  let cookies;
   try {
-    cookies = event.headers.cookie;
+    const cookies = event.headers.cookie;
     if (!cookies) {
       return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required' }) };
     }
@@ -65,17 +64,10 @@ exports.handler = async (event, context) => {
     return { statusCode: 401, body: JSON.stringify({ error: 'Session expired or invalid' }) };
   }
 
-  // 4. IF User is Authenticated, THEN Check CSRF
-  const csrfError = validateCsrf(event);
-  if (csrfError) {
-    // Important: If we have valid auth but CSRF failed, it could be:
-    // a) Stale frontend session (refresh page)
-    // b) Actual CSRF attack
-    console.warn('[GetProfile] CSRF validation failed for authenticated user:', userId);
-    return csrfError;
-  }
-
-  // 5. Rate Limiting Check
+  // ✅ KEY FIX: SKIP CSRF for GET requests (read-only operations don't need CSRF)
+  // CSRF should only protect state-changing operations (POST, PUT, DELETE)
+  
+  // 4. Rate Limiting Check
   const rateKey = `${RATE_LIMIT_KEY_PREFIX}${userId}`;
   let attempts = 0;
   
@@ -97,7 +89,7 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // 6. Fetch User Data
+  // 5. Fetch User Data (with public. schema prefix)
   const client = await pool.connect();
   try {
     const result = await client.query(
