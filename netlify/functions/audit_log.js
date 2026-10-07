@@ -4,41 +4,57 @@ const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { validateCsrf } = require('./_middleware/csrf-check');
 
-// --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const jwtSecret = process.env.JWT_SECRET;
 const RATE_LIMIT_KEY_PREFIX = 'audit_log_read:';
 const MAX_REQUESTS_PER_MINUTE = 30;
 const RATE_LIMIT_WINDOW = 60;
 
-// Initialize Pool with conditional SSL
 const pool = new Pool({ 
   connectionString: dbUrl,
   ssl: process.env.NODE_ENV === 'production' 
     ? { rejectUnauthorized: false }
-    : false // Disable SSL for local dev
+    : false
 });
 
-// Robust parsing of ADMIN_USER_IDS
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS 
   ? process.env.ADMIN_USER_IDS.split(',').map(id => id.trim().toLowerCase()) 
   : [];
 
 exports.handler = async (event, context) => {
-  // 1. Method Check
-  if (event.httpMethod !== 'GET') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed. Use GET to view logs.' }) };
+  // 1. Handle CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const origin = event.headers.origin || '*';
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400'
+      }
+    };
   }
 
-  // 2. CSRF Check
-  const csrfError = validateCsrf(event);
-  if (csrfError) return csrfError;
+  // 2. Method Check
+  if (event.httpMethod !== 'GET') {
+    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+  }
 
-  // 3. Rate Limiting Check
+  // 3. CSRF Check (READ-ONLY - may consider relaxing this)
+  const csrfError = validateCsrf(event);
+  if (csrfError) {
+    console.warn('[AuditLog] CSRF validation failed:', csrfError.body);
+    return csrfError;
+  }
+
+  // 4. Rate Limiting Check
   let userId;
   try {
     const cookies = event.headers.cookie;
     if (!cookies) {
+      console.error('[AuditLog] No cookies in request');
       return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required' }) };
     }
 
@@ -46,6 +62,7 @@ exports.handler = async (event, context) => {
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
     
     if (!authTokenPair) {
+      console.error('[AuditLog] auth_token cookie missing');
       return { statusCode: 401, body: JSON.stringify({ error: 'Session cookie missing' }) };
     }
 
@@ -53,8 +70,13 @@ exports.handler = async (event, context) => {
     const decoded = jwt.verify(token, jwtSecret);
     userId = decoded.userId;
   } catch (err) {
+    console.error('[AuditLog] JWT verification failed:', err.message);
     return { statusCode: 401, body: JSON.stringify({ error: 'Invalid session' }) };
   }
+
+  // Debug logging for cookie issues
+  console.log('[AuditLog] Authenticated user:', userId);
+  console.log('[AuditLog] Cookies received:', event.headers.cookie?.substring(0, 100) + '...');
 
   const rateKey = `${RATE_LIMIT_KEY_PREFIX}${userId}`;
   let attempts = 0;
@@ -77,7 +99,7 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // 4. Authenticate & Check Admin Status
+  // 5. Authenticate & Check Admin Status
   let isAdmin = false;
   const currentUserId = String(userId).trim().toLowerCase();
   
@@ -88,7 +110,7 @@ exports.handler = async (event, context) => {
     console.log(`[AuditLog] Non-admin access for user: ${currentUserId}. Showing only own logs.`);
   }
 
-  // 5. Parse Query Params
+  // 6. Parse Query Params
   const { limit = '50', offset = '0', userId: filterUserId } = event.queryStringParameters || {};
   
   const safeLimit = Math.min(parseInt(limit, 10) || 50, 100);
@@ -100,48 +122,40 @@ exports.handler = async (event, context) => {
     let params = [];
 
     if (!isAdmin) {
-      // Non-admin: Only see own logs
       query = `
         SELECT id, event_type, details, timestamp, ip_address 
-        FROM audit_logs 
+        FROM public.audit_logs 
         WHERE user_id = $1 
         ORDER BY timestamp DESC 
         LIMIT $2 OFFSET $3
       `;
       params = [userId, safeLimit, safeOffset];
     } else {
-      // Admin: See all logs, optionally filtered
       if (filterUserId) {
-        // Validate filterUserId
         if (isNaN(parseInt(filterUserId))) {
           return { statusCode: 400, body: JSON.stringify({ error: 'Invalid user ID filter' }) };
         }
-        // Use $1 for user_id, $2 for limit, $3 for offset
         query = `
           SELECT id, event_type, details, timestamp, ip_address, user_id 
-          FROM audit_logs 
+          FROM public.audit_logs 
           WHERE user_id = $1 
           ORDER BY timestamp DESC 
           LIMIT $2 OFFSET $3
         `;
         params = [filterUserId, safeLimit, safeOffset];
       } else {
-        // FIXED: Use $1 and $2 since there is no user_id filter
-        // This aligns the placeholders with the params array [safeLimit, safeOffset]
         query = `
           SELECT id, event_type, details, timestamp, ip_address, user_id 
-          FROM audit_logs 
+          FROM public.audit_logs 
           ORDER BY timestamp DESC 
           LIMIT $1 OFFSET $2
         `;
-        // FIXED: Pass params in order matching $1, $2
         params = [safeLimit, safeOffset];
       }
     }
 
     const result = await client.query(query, params);
 
-    // Increment rate limit
     try {
       await redis.incr(rateKey);
       await redis.expire(rateKey, RATE_LIMIT_WINDOW);
@@ -149,10 +163,17 @@ exports.handler = async (event, context) => {
       console.warn('[AuditLog] Redis incr failed:', redisErr.message);
     }
 
+    const origin = event.headers.origin;
+    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
+      ? origin 
+      : 'https://app.indoscient.in';
+
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': allowedOrigin,
+        'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'X-Content-Type-Options': 'nosniff',
       },
