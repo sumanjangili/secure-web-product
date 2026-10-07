@@ -35,6 +35,34 @@ if (dbUrl) {
   }
 }
 
+/**
+ * Logs audit events with GUARANTEED constraint compliance.
+ * CRITICAL: The 'details' JSON MUST contain:
+ * - event_type: STRING (top-level field in details)
+ * - timestamp: STRING (top-level field in details)
+ */
+async function logAuditEvent(client, userId, eventType, details, ipAddress) {
+  try {
+    // BUILD compliant structure - NEVER rely on passed details alone
+    const compliantDetails = {
+      event_type: String(eventType),           // REQUIRED by chk_audit_details_structure
+      timestamp: new Date().toISOString(),     // REQUIRED by chk_audit_details_structure (as STRING)
+      ...(details && details.email && { email: details.email }),
+      ...(details && details.mfaEnabled !== undefined && { mfa_required: Boolean(details.mfaEnabled) }),
+      ip_address: ipAddress || 'unknown'       // Additional info
+    };
+
+    await client.query(
+      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, eventType, JSON.stringify(compliantDetails), ipAddress || 'unknown']
+    );
+  } catch (err) {
+    // ABSOLUTELY NON-FATAL - never break login flow
+    console.error(`[Audit] NON-FATAL: ${eventType} - ${err.message}`);
+  }
+}
+
 exports.handler = async (event, context) => {
   // Global timeout to prevent hanging functions
   const timeoutPromise = new Promise((_, reject) => 
@@ -139,10 +167,14 @@ async function executeHandler(event, context) {
     const isValid = await argon2.verify(user.password_hash, password);
     if (!isValid) {
       const ipAddress = context?.identity?.sourceIp || 'unknown';
-      // Log failure (isolated)
+      // Log failure (ISOLATED - non-fatal)
       try {
-        await logAuditEvent(client, user.id, 'LOGIN_FAILED', { email }, ipAddress);
-      } catch (e) { console.warn('Audit log failed on login failure'); }
+        await logAuditEvent(client, user.id, 'LOGIN_FAILED', { 
+          email: email 
+        }, ipAddress);
+      } catch (auditErr) {
+        console.warn('Audit log failed on login failure (ignored):', auditErr.message);
+      }
       
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
@@ -157,58 +189,50 @@ async function executeHandler(event, context) {
     // 10. Generate CSRF Token
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
-    // 11. Audit Log (ISOLATED)
+    // 11. Audit Log (ISOLATED - non-fatal)
     const ipAddress = context?.identity?.sourceIp || 'unknown';
     try {
       await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { 
-        email, 
-        mfaRequired: user.mfa_enabled || false
+        email: user.email,
+        mfaEnabled: user.mfa_enabled || false
       }, ipAddress);
     } catch (auditErr) {
-      console.error('[Login] Audit Log FAILED (Non-Fatal):', auditErr.message);
+      console.error('[Login] Audit Log FAILED (Ignored):', auditErr.message);
     }
 
-    // 12. Update Last Login (ISOLATED)
+    // 12. Update Last Login (ISOLATED - non-fatal)
     try {
       await client.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
     } catch (updateErr) {
-      console.error('[Login] Update Last Login FAILED (Non-Fatal):', updateErr.message);
+      console.error('[Login] Update Last Login FAILED (Ignored):', updateErr.message);
     }
 
-    // 13. Prepare Cookies (FIXED: Secure + Lax)
+    // 13. Prepare Cookies (FIXED: Secure + SameSite=None for production)
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
-    const samesiteFlag = 'Lax'; 
+    const samesiteFlag = isProd ? 'None' : 'Lax';  // CRITICAL: 'None' for HTTPS cross-origin
     
-    const authParts = [`auth_token=${token}`, 'HttpOnly', `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
-    const csrfParts = [`csrf_token=${csrfToken}`, `SameSite=${samesiteFlag}`, `Path=/`, `Max-Age=${SESSION_DURATION}`];
+    // Single combined Set-Cookie header to prevent header overflow
+    const authCookie = `auth_token=${token}; HttpOnly; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
+    const csrfCookie = `csrf_token=${csrfToken}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
 
-    if (isProd) {
-      authParts.unshift('Secure');
-      csrfParts.unshift('Secure');
-    }
-    
-    const cookie1 = authParts.join('; ');
-    const cookie2 = csrfParts.join('; ');
-
-    // Get the origin from the request headers
-    const origin = event.headers.origin || '*';
-    // If origin is missing (e.g., postman), use '*' but be careful with credentials
-    const allowedOrigin = origin === '*' ? '*' : origin;
+    // Get origin for CORS
+    const origin = event.headers.origin;
+    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
+      ? origin 
+      : 'https://app.indoscient.in';
 
     console.log(`[Login] PREPARING RESPONSE. Origin: ${origin}, Allowed: ${allowedOrigin}`);
 
     const response = {
       statusCode: 200,
       headers: {
-        'Set-Cookie': [cookie1, cookie2],
+        'Set-Cookie': `${authCookie}, ${csrfCookie}`,
         'Content-Type': 'application/json',
-        // CORRECT CORS: Match the origin exactly
         'Access-Control-Allow-Origin': allowedOrigin,
         'Access-Control-Allow-Credentials': 'true',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
         'Access-Control-Max-Age': '86400',
-        // Security Headers
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'X-Frame-Options': 'DENY',
         'X-Content-Type-Options': 'nosniff'
@@ -230,24 +254,5 @@ async function executeHandler(event, context) {
   } finally {
     console.log('[Login] Releasing DB client.');
     client.release();
-  }
-}
-
-/**
- * Logs audit events. 
- * FIXED: Removes 'timestamp' from details to avoid constraint violations.
- */
-async function logAuditEvent(client, userId, eventType, details, ipAddress) {
-  try {
-    const { timestamp, ...safeDetails } = details;
-    
-    await client.query(
-      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, eventType, JSON.stringify(safeDetails), ipAddress || 'unknown']
-    );
-  } catch (err) {
-    console.error('[Audit] Failed:', err.message);
-    // Do NOT re-throw.
   }
 }
