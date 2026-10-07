@@ -239,10 +239,10 @@ const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.incl
 return {
   statusCode: 200,
   headers: {
-    'Set-Cookie': `${authCookie}, ${csrfCookie}`,  // Combined into single header
+    'Set-Cookie': [authCookie, csrfCookie],  // ARRAY = two separate Set-Cookie headers
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': allowedOrigin,  // Must match frontend origin exactly
-    'Access-Control-Allow-Credentials': 'true',    // Required when using credentials: include
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
     'Access-Control-Max-Age': '86400',
@@ -256,8 +256,7 @@ return {
     mfaEnabled: user.mfa_enabled || false,
     message: user.mfa_enabled ? 'MFA required' : 'Login successful'
   })
-};
- 
+}; 
     console.log('[Login] RETURNING RESPONSE.');
     return response;
 
