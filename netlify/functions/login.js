@@ -207,44 +207,45 @@ async function executeHandler(event, context) {
       console.error('[Login] Update Last Login FAILED (Ignored):', updateErr.message);
     }
 
-    // 13. Prepare Cookies (FIXED: Secure + SameSite=None for production)
-    const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
-    const samesiteFlag = isProd ? 'None' : 'Lax';  // CRITICAL: 'None' for HTTPS cross-origin
-    
-    // Single combined Set-Cookie header to prevent header overflow
-    const authCookie = `auth_token=${token}; HttpOnly; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
-    const csrfCookie = `csrf_token=${csrfToken}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
+    // 13. Prepare Cookies
+const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
+const samesiteFlag = isProd ? 'None' : 'Lax';  // CRITICAL: 'None' for HTTPS cross-origin
 
-    // Get origin for CORS
-    const origin = event.headers.origin;
-    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
-      ? origin 
-      : 'https://app.indoscient.in';
+// Generate both cookies
+const authCookie = `auth_token=${token}; HttpOnly; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
+const csrfCookie = `csrf_token=${csrfToken}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}`;
 
-    console.log(`[Login] PREPARING RESPONSE. Origin: ${origin}, Allowed: ${allowedOrigin}`);
+console.log(`[Login] Production mode: ${isProd}`);
+console.log(`[Login] SameSite: ${samesiteFlag}`);
+console.log(`[Login] Auth cookie: ${authCookie.substring(0, 100)}...`);
+console.log(`[Login] CSRF cookie: ${csrfCookie.substring(0, 100)}...`);
 
-    const response = {
-      statusCode: 200,
-      headers: {
-        'Set-Cookie': `${authCookie}, ${csrfCookie}`,
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': allowedOrigin,
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
-        'Access-Control-Max-Age': '86400',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-        'X-Frame-Options': 'DENY',
-        'X-Content-Type-Options': 'nosniff'
-      },
-      body: JSON.stringify({
-        success: true,
-        userId: user.id,
-        mfaEnabled: user.mfa_enabled || false,
-        message: user.mfa_enabled ? 'MFA required' : 'Login successful'
-      })
-    };
+const origin = event.headers.origin;
+const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
+  ? origin 
+  : 'https://app.indoscient.in';
 
+return {
+  statusCode: 200,
+  headers: {
+    'Set-Cookie': `${authCookie}, ${csrfCookie}`,  // Combined into single header
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': allowedOrigin,  // CRITICAL: Must match frontend origin exactly
+    'Access-Control-Allow-Credentials': 'true',    // CRITICAL: Required for credentials mode
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff'
+  },
+  body: JSON.stringify({
+    success: true,
+    userId: user.id,
+    mfaEnabled: user.mfa_enabled || false,
+    message: user.mfa_enabled ? 'MFA required' : 'Login successful'
+  })
+};
+ 
     console.log('[Login] RETURNING RESPONSE.');
     return response;
 

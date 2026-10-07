@@ -2,46 +2,68 @@
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
-const { validateCsrf } = require('./_middleware/csrf-check'); // Import CSRF validator
+const { validateCsrf } = require('./_middleware/csrf-check');
 
-// --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const RATE_LIMIT_KEY_PREFIX = 'consent_save:';
-const MAX_UPDATES_PER_MINUTE = 5; // Prevent spam
-const RATE_LIMIT_WINDOW = 60; // 1 minute
+const MAX_UPDATES_PER_MINUTE = 5;
+const RATE_LIMIT_WINDOW = 60;
 
-// Initialize Pool with SSL for Neon/Cloud Postgres
 const pool = new Pool({ 
   connectionString: dbUrl,
   ssl: process.env.NODE_ENV === 'production' 
-    ? { rejectUnauthorized: false }
-    : false // Disable SSL for local dev
+    ? { rejectUnauthorized: false } 
+    : false
 });
 
-// Helper to validate version string (prevent injection of weird chars)
-const isValidVersion = (str) => {
-  // Allow simple versions like "1.0", "v1.0", "1.0.1"
-  return /^[a-zA-Z0-9._-]+$/.test(str) && str.length <= 20;
-};
+/**
+ * Logs audit events with GUARANTEED constraint compliance.
+ */
+async function logAuditEvent(client, userId, eventType, details, ipAddress) {
+  try {
+    const compliantDetails = {
+      event_type: String(eventType),           // REQUIRED by chk_audit_details_structure
+      timestamp: new Date().toISOString(),     // REQUIRED by chk_audit_details_structure (as STRING)
+      ...(details || {}),
+      ip_address: ipAddress || 'unknown'
+    };
 
-// Helper to validate ISO timestamp
-const isValidTimestamp = (str) => {
-  if (!str || typeof str !== 'string') return false;
-  const date = new Date(str);
-  return !isNaN(date.getTime());
-};
+    await client.query(
+      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address) 
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, eventType, JSON.stringify(compliantDetails), ipAddress || 'unknown']
+    );
+  } catch (err) {
+    console.error(`[Audit] NON-FATAL: ${eventType} - ${err.message}`);
+  }
+}
 
 exports.handler = async (event, context) => {
-  // 1. Method Check
+  // 1. Handle CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const origin = event.headers.origin || '*';
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400'
+      }
+    };
+  }
+
+  // 2. Method Check
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // 2. CSRF Check (CRITICAL)
+  // 3. CSRF Check (KEEP for POST - state-changing operation)
   const csrfError = validateCsrf(event);
   if (csrfError) return csrfError;
 
-  // 3. Rate Limiting Check
+  // 4. Extract and Verify Auth Token
   let userId;
   try {
     const cookies = event.headers.cookie;
@@ -67,6 +89,7 @@ exports.handler = async (event, context) => {
     return { statusCode: 401, body: JSON.stringify({ error: 'Invalid session' }) };
   }
 
+  // 5. Rate Limiting Check
   const rateKey = `${RATE_LIMIT_KEY_PREFIX}${userId}`;
   let attempts = 0;
   
@@ -88,7 +111,7 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // 4. Parse Body
+  // 6. Parse Body
   let payload;
   try {
     payload = JSON.parse(event.body || '{}');
@@ -96,49 +119,46 @@ exports.handler = async (event, context) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
 
-  const { essential, analytics, timestamp, version } = payload;
+  const { essential, analytics, version } = payload;
   
-  // 5. Validate Payload
+  // 7. Validate Payload
   if (typeof essential !== 'boolean' || typeof analytics !== 'boolean') {
     return { statusCode: 400, body: JSON.stringify({ error: 'essential and analytics must be booleans' }) };
   }
-  
-  if (!version || typeof version !== 'string' || !isValidVersion(version)) {
+
+  if (!version || typeof version !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(version) || version.length > 20) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid version format' }) };
   }
 
-  // Validate timestamp if provided, otherwise use server time
-  const safeTimestamp = timestamp && isValidTimestamp(timestamp) ? timestamp : new Date().toISOString();
-
   const client = await pool.connect();
   try {
-    // 6. Store Consent Record
-    // Ensure 'consent_records' table exists with columns: user_id, essential, analytics, version, timestamp, created_at
+    // 8. Upsert Consent Record (with public. schema prefix)
     await client.query(
-      `INSERT INTO consent_records (user_id, essential, analytics, version, timestamp, created_at) 
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [userId, essential, analytics, version, safeTimestamp]
+      `INSERT INTO public.consent_records (user_id, essential, analytics, version, timestamp, created_at) 
+       VALUES ($1, $2, $3, $4, NOW(), NOW())
+       ON CONFLICT (user_id) 
+       DO UPDATE SET 
+         essential = EXCLUDED.essential,
+         analytics = EXCLUDED.analytics,
+         version = EXCLUDED.version,
+         timestamp = EXCLUDED.timestamp`,
+      [userId, essential, analytics, version]
     );
 
-    // 7. Log to Audit Trail (FIXED: Ensuring details structure matches DB constraint)
+    // 9. Log to Audit Trail (COMPLIANT with constraints)
     const ipAddress = context.identity?.sourceIp || 'unknown';
+    
+    try {
+      await logAuditEvent(client, userId, 'CONSENT_UPDATED', { 
+        essential,
+        analytics,
+        version
+      }, ipAddress);
+    } catch (auditErr) {
+      console.error('[SaveConsent] Audit FAILED (ignored):', auditErr.message);
+    }
 
-    // ✅ FIX: Explicitly include event_type and timestamp in the details object
-    const safeDetails = {
-      event_type: 'CONSENT_UPDATED',
-      timestamp: safeTimestamp,
-      essential,
-      analytics,
-      version
-    };
-
-    await client.query(
-      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, 'CONSENT_UPDATED', JSON.stringify(safeDetails), ipAddress]
-    );
-
-    // 8. Increment Rate Limit
+    // 10. Increment Rate Limit
     try {
       await redis.incr(rateKey);
       await redis.expire(rateKey, RATE_LIMIT_WINDOW);
@@ -146,12 +166,20 @@ exports.handler = async (event, context) => {
       console.warn('[SaveConsent] Redis incr failed:', redisErr.message);
     }
 
+    const origin = event.headers.origin;
+    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
+      ? origin 
+      : 'https://app.indoscient.in';
+
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': allowedOrigin,
+        'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-        'X-Content-Type-Options': 'nosniff'
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY'
       },
       body: JSON.stringify({ 
         success: true, 
