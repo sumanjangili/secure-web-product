@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
-const { validateCsrf } = require('./_middleware/csrf-check'); // Import CSRF validator
+const { validateCsrf } = require('./_middleware/csrf-check');
 
 // Set options once globally
 authenticator.options = { window: 1 };
@@ -20,22 +20,57 @@ const pool = new Pool({
   connectionString: dbUrl,
   ssl: process.env.NODE_ENV === 'production' 
     ? { rejectUnauthorized: false }
-    : false  // Disable SSL for local dev
+    : false
 });
 
+/**
+ * Logs audit events with GUARANTEED constraint compliance.
+ */
+async function logAuditEvent(client, userId, eventType, details, ipAddress) {
+  try {
+    const compliantDetails = {
+      event_type: String(eventType),           // REQUIRED by chk_audit_details_structure
+      timestamp: new Date().toISOString(),     // REQUIRED by chk_audit_details_structure (as STRING)
+      ...(details || {}),                       // Additional details
+      ip_address: ipAddress || 'unknown'
+    };
+
+    await client.query(
+      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address) 
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, eventType, JSON.stringify(compliantDetails), ipAddress || 'unknown']
+    );
+  } catch (err) {
+    console.error(`[Audit] NON-FATAL: ${eventType} - ${err.message}`);
+  }
+}
+
 exports.handler = async (event, context) => {
+  // Handle CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const origin = event.headers.origin || '*';
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400'
+      }
+    };
+  }
+
   // 1. Method Check
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
   // 2. CSRF Check (CRITICAL)
-  // Prevents Cross-Site Request Forgery attacks on this state-changing endpoint
   const csrfError = validateCsrf(event);
   if (csrfError) return csrfError;
 
   // 3. Authenticate via Cookie (HttpOnly)
-  // The user has already logged in (step 1), so the cookie should exist.
   let userId;
   try {
     const cookies = event.headers.cookie;
@@ -43,7 +78,6 @@ exports.handler = async (event, context) => {
       return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. No session cookie found.' }) };
     }
 
-    // Parse cookies to find 'auth_token'
     const cookiePairs = cookies.split(';');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
     
@@ -52,8 +86,6 @@ exports.handler = async (event, context) => {
     }
 
     const token = authTokenPair.split('=')[1];
-    
-    // Verify JWT (This token was set in the login step, pending MFA)
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     userId = decoded.userId;
   } catch (jwtErr) {
@@ -80,11 +112,11 @@ exports.handler = async (event, context) => {
 
   const client = await pool.connect();
   try {
-    // 5. Fetch User Data
-    const userResult = await client.query('SELECT * FROM users WHERE id = $1', [userId]);
+    // 5. Fetch User Data (with public. schema prefix)
+    const userResult = await client.query('SELECT * FROM public.users WHERE id = $1', [userId]);
 
     if (userResult.rows.length === 0) {
-      // Constant time delay to prevent timing attacks (simulate work even if user not found)
+      // Constant time delay to prevent timing attacks
       await new Promise((resolve) => setTimeout(resolve, 500));
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid credentials' }) };
     }
@@ -100,13 +132,18 @@ exports.handler = async (event, context) => {
       attempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
     } catch (redisErr) {
       console.warn('[VerifyMFA] Redis error (non-fatal):', redisErr.message);
-      // Proceed without rate limiting if Redis fails, but log it
     }
 
     if (attempts >= MAX_ATTEMPTS) {
       const ttl = await redis.ttl(rateKey).catch(() => LOCKOUT_TIME_SECONDS);
       const ipAddress = context.identity?.sourceIp || 'unknown';
-      await logAuditEvent(client, userId, 'MFA_RATE_LIMITED', { method }, ipAddress);
+      
+      try {
+        await logAuditEvent(client, userId, 'MFA_RATE_LIMITED', { method }, ipAddress);
+      } catch (auditErr) {
+        console.error('[VerifyMFA] Audit FAILED (ignored):', auditErr.message);
+      }
+      
       return {
         statusCode: 429,
         body: JSON.stringify({ 
@@ -127,7 +164,6 @@ exports.handler = async (event, context) => {
       isValid = authenticator.check(mfaCode, user.mfa_secret);
     } else if (method === 'backup') {
       const storedHashes = user.backup_code_hashes || [];
-      // Iterate to find matching hash
       for (let i = 0; i < storedHashes.length; i++) {
         try {
           if (await argon2.verify(storedHashes[i], backupCode)) {
@@ -151,28 +187,33 @@ exports.handler = async (event, context) => {
       }
       
       const ipAddress = context.identity?.sourceIp || 'unknown';
-      await logAuditEvent(client, userId, 'MFA_FAILED', { method }, ipAddress);
+      
+      try {
+        await logAuditEvent(client, userId, 'MFA_FAILED', { method }, ipAddress);
+      } catch (auditErr) {
+        console.error('[VerifyMFA] Audit FAILED (ignored):', auditErr.message);
+      }
+      
       return {
         statusCode: 401,
         body: JSON.stringify({ 
           error: 'Invalid code', 
-          requiresBackupCode: method === 'totp' // Suggest backup code if TOTP failed
+          requiresBackupCode: method === 'totp'
         }),
       };
     }
 
     // 8. Success: Begin Transaction for Atomic Updates
-    // This prevents race conditions where two simultaneous requests consume the same backup code
     await client.query('BEGIN');
 
     try {
-      // 9. Handle Backup Code Consumption (Atomic)
+      // 9. Handle Backup Code Consumption (Atomic, with public. schema prefix)
       if (method === 'backup' && matchedHashIndex !== -1) {
         const newHashes = user.backup_code_hashes.filter((_, i) => i !== matchedHashIndex);
         const needsNew = newHashes.length === 0;
         
         await client.query(
-          `UPDATE users SET backup_code_hashes = $1, needs_new_backup_codes = $2 WHERE id = $3`,
+          `UPDATE public.users SET backup_code_hashes = $1, needs_new_backup_codes = $2 WHERE id = $3`,
           [newHashes, needsNew, userId]
         );
       }
@@ -184,12 +225,17 @@ exports.handler = async (event, context) => {
         { expiresIn: '24h' }
       );
 
-      // 11. Log Success
+      // 11. Log Success (with compliant audit structure)
       const ipAddress = context.identity?.sourceIp || 'unknown';
-      await logAuditEvent(client, userId, 'MFA_SUCCESS', { 
-        method, 
-        ip: ipAddress
-      }, ipAddress);
+      
+      try {
+        await logAuditEvent(client, userId, 'MFA_SUCCESS', { 
+          method, 
+          ip_address: ipAddress
+        }, ipAddress);
+      } catch (auditErr) {
+        console.error('[VerifyMFA] Audit FAILED (ignored):', auditErr.message);
+      }
 
       // Commit the transaction
       await client.query('COMMIT');
@@ -201,23 +247,31 @@ exports.handler = async (event, context) => {
         console.warn('[VerifyMFA] Redis del failed:', redisErr.message);
       }
 
-      // 13. Return Response with NEW Cookie
-      const isProd = process.env.NODE_ENV === 'production';
+      // 13. Return Response with NEW Cookie (FIXED: SameSite=None + Secure for production)
+      const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
+      const samesiteFlag = isProd ? 'None' : 'Lax';
       const secureFlag = isProd ? 'Secure' : '';
+      
+      const origin = event.headers.origin;
+      const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
+        ? origin 
+        : 'https://app.indoscient.in';
       
       return {
         statusCode: 200,
         headers: {
-          // Set the new fully-authenticated cookie
-          'Set-Cookie': `auth_token=${newToken}; HttpOnly; ${secureFlag}; SameSite=Strict; Path=/; Max-Age=86400`,
+          'Set-Cookie': `auth_token=${newToken}; HttpOnly; ${secureFlag}; SameSite=${samesiteFlag}; Path=/; Max-Age=86400`,
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, private'
+          'Access-Control-Allow-Origin': allowedOrigin,
+          'Access-Control-Allow-Credentials': 'true',
+          'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY'
         },
         body: JSON.stringify({
           success: true,
           userId: user.id,
           message: 'MFA verified successfully'
-          // ❌ REMOVED: token from body (security best practice)
         }),
       };
 
@@ -225,7 +279,7 @@ exports.handler = async (event, context) => {
       // Rollback on database error
       await client.query('ROLLBACK');
       console.error('[VerifyMFA] Database transaction failed:', dbError);
-      throw dbError; // Re-throw to be caught by outer catch
+      throw dbError;
     }
 
   } catch (error) {
@@ -235,24 +289,3 @@ exports.handler = async (event, context) => {
     client.release();
   }
 };
-
-// Updated logAuditEvent to ensure details structure matches DB constraint
-async function logAuditEvent(client, userId, eventType, details, ipAddress) {
-  try {
-    // Ensure details object contains required keys
-    const safeDetails = {
-      event_type: eventType, // Required by constraint
-      timestamp: new Date().toISOString(), // Required by constraint
-      ...details // Spread original details (method, ip, etc.)
-    };
-
-    await client.query(
-      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-       VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, eventType, JSON.stringify(safeDetails), ipAddress || 'unknown']
-    );
-  } catch (err) {
-    console.error('[Audit Log] Failed:', err.message);
-    // Don't fail the main operation if audit logging fails
-  }
-}

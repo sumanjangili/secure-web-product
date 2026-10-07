@@ -4,7 +4,6 @@ const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { validateCsrf } = require('./_middleware/csrf-check');
 
-// --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const RATE_LIMIT_KEY_PREFIX = 'profile_get:';
 const MAX_REQUESTS_PER_MINUTE = 60;
@@ -22,47 +21,61 @@ if (!dbUrl) {
 }
 
 exports.handler = async (event, context) => {
-  // 1. Method Check
+  // 1. Handle CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const origin = event.headers.origin || '*';
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400'
+      }
+    };
+  }
+
+  // 2. Method Check
   if (event.httpMethod !== 'GET') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // 2. Extract and Verify Auth Token FIRST (Before CSRF)
+  // 3. Extract and Verify Auth Token FIRST (Before CSRF)
   let userId = null;
+  let cookies;
   try {
-    const cookies = event.headers.cookie;
+    cookies = event.headers.cookie;
     if (!cookies) {
-      // No cookies at all -> Not logged in
       return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required' }) };
     }
 
-    const cookiePairs = cookies.split('; ');
+    const cookiePairs = cookies.split(';');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
     
     if (!authTokenPair) {
-      // No auth token -> Not logged in
-      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required' }) };
+      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. Session cookie missing.' }) };
     }
 
     const token = authTokenPair.split('=')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     userId = decoded.userId;
   } catch (jwtErr) {
-    // Invalid or expired token -> Not logged in
     console.error('[GetProfile] JWT Verification Failed:', jwtErr.message);
     return { statusCode: 401, body: JSON.stringify({ error: 'Session expired or invalid' }) };
   }
 
-  // 3. IF User is Authenticated, THEN Check CSRF
-  // This prevents the 403 loop for unauthenticated users who have stale cookies
+  // 4. IF User is Authenticated, THEN Check CSRF
   const csrfError = validateCsrf(event);
   if (csrfError) {
-    // If CSRF fails but we have a valid user, it's a real attack or bad session
-    // Return 403
+    // Important: If we have valid auth but CSRF failed, it could be:
+    // a) Stale frontend session (refresh page)
+    // b) Actual CSRF attack
+    console.warn('[GetProfile] CSRF validation failed for authenticated user:', userId);
     return csrfError;
   }
 
-  // 4. Rate Limiting Check (Only for authenticated users)
+  // 5. Rate Limiting Check
   const rateKey = `${RATE_LIMIT_KEY_PREFIX}${userId}`;
   let attempts = 0;
   
@@ -84,11 +97,11 @@ exports.handler = async (event, context) => {
     };
   }
 
-  // 5. Fetch User Data
+  // 6. Fetch User Data
   const client = await pool.connect();
   try {
     const result = await client.query(
-      'SELECT id, email, mfa_enabled, needs_new_backup_codes FROM users WHERE id = $1',
+      'SELECT id, email, mfa_enabled, needs_new_backup_codes FROM public.users WHERE id = $1',
       [userId]
     );
 
@@ -106,10 +119,17 @@ exports.handler = async (event, context) => {
       console.warn('[GetProfile] Redis incr failed:', redisErr.message);
     }
 
+    const origin = event.headers.origin;
+    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
+      ? origin 
+      : 'https://app.indoscient.in';
+
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': allowedOrigin,
+        'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'X-Content-Type-Options': 'nosniff'
       },

@@ -10,19 +10,16 @@ function getCookie(name: string): string | null {
   const cookieString = document.cookie;
   if (!cookieString) return null;
 
-  // Split by '; ' to get individual cookies
-  const cookies = cookieString.split('; ');
+  // Split by ';' to handle both '; ' and ';'
+  const cookies = cookieString.split(';');
   
   for (const cookie of cookies) {
-    // Check if this cookie starts with the name
-    if (cookie.startsWith(`${name}=`)) {
-      // Extract the value part
-      const value = cookie.substring(name.length + 1);
-      // Decode in case it was URL-encoded (e.g., spaces became %20)
+    const trimmed = cookie.trim();
+    if (trimmed.startsWith(`${name}=`)) {
+      const value = trimmed.substring(name.length + 1);
       try {
         return decodeURIComponent(value);
       } catch {
-        // If decoding fails, return raw value
         return value;
       }
     }
