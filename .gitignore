@@ -40,6 +40,8 @@ data.sql
 
 # Environment files (CRITICAL - NEVER commit secrets)
 .env
+**/.env
+.env*
 .env.local
 .env.development.local
 .env.test.local
