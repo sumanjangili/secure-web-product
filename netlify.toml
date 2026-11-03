@@ -36,6 +36,11 @@
   included_files = ["netlify/functions/lib/**"]
 
 [[redirects]]
+  from = "/api/github-webhook"
+  to = "/.netlify/functions/github-webhook"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

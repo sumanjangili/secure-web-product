@@ -3,6 +3,11 @@ const crypto = require('crypto');
 
 exports.handler = async (event, context) => {
   // Verify the request method
+
+  if (event.httpMethod === 'GET') {
+    return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+  }
+
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
