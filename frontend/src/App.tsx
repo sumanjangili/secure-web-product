@@ -48,7 +48,7 @@ const App: React.FC = () => {
 
     const checkAuth = async () => {
       try {
-        const data = await secureFetchJson<UserProfile>("/.netlify/functions/get-user-profile");
+        const data = await secureFetchJson<UserProfile>("/get-user-profile");
         setCurrentUser(data);
         setIsLoggedIn(true);
       } catch (err: any) {
@@ -73,7 +73,7 @@ const App: React.FC = () => {
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
-    try { await secureFetchJson("/.netlify/functions/logout", { method: 'POST' }); } catch (e) {}
+    try { await secureFetchJson("/logout", { method: 'POST' }); } catch (e) {}
     finally {
       setCurrentUser(null);
       setIsLoggedIn(false);
@@ -83,7 +83,7 @@ const App: React.FC = () => {
 
   const handleLoginSuccess = useCallback(async () => {
     try {
-      const data = await secureFetchJson<UserProfile>("/.netlify/functions/get-user-profile");
+      const data = await secureFetchJson<UserProfile>("/get-user-profile");
       setCurrentUser(data);
       setIsLoggedIn(true);
     } catch (e) { handleLogout(); }

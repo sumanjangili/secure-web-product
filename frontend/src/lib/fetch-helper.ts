@@ -1,198 +1,554 @@
 // frontend/src/lib/fetch-helper.ts
 
 /**
- * Safely extracts a cookie value by name.
- * Uses split logic to avoid regex edge cases with special characters.
- * Includes debug logging to trace cookie transmission issues.
+ * SecureFetch Library
+ * 
+ * Handles authentication, CSRF, rate-limit awareness, and structured error handling
+ * for all API communication with the backend.
+ * 
+ * Architecture Decision:
+ * - Proxy all /api/* requests through netlify.toml redirects
+ * - This makes cookies first-party (SameSite=Lax, no domain juggling)
+ * - Eliminates third-party cookie restrictions (Safari ITP, Firefox partitioning)
+ */
+
+// --- Configuration ---
+// Centralized API base URL - update ONE place for all environment changes
+const API_BASE = import.meta.env?.VITE_API_BASE_URL ?? '/api';
+
+// Network timeout (milliseconds) - prevents indefinite hangs
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+// Max retries for transient errors (network glitches, 5xx)
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 500;
+
+// --- Debug Mode Control ---
+/**
+ * Debug mode is controlled by environment variables ONLY.
+ * NEVER enable in production builds - logs sensitive auth data.
+ */
+const DEBUG_MODE = import.meta.env?.DEV === true || 
+                   import.meta.env?.VITE_SECURE_FETCH_DEBUG === 'true';
+
+function debug(...args: unknown[]) {
+  if (DEBUG_MODE) {
+    console.log('[SecureFetch]', ...args);
+  }
+}
+
+function warn(...args: unknown[]) {
+  console.warn('[SecureFetch]', ...args);
+}
+
+function error(...args: unknown[]) {
+  console.error('[SecureFetch]', ...args);
+}
+
+// --- Cookie Utilities ---
+
+/**
+ * Extracts a cookie value by name from document.cookie.
+ * Uses character-based parsing (more reliable than regex).
+ * 
+ * @param name - Cookie name to search for
+ * @returns Decoded cookie value, or null if not found
  */
 function getCookie(name: string): string | null {
-  // Safety check: Must run in browser environment
-  if (typeof document === 'undefined') {
-    console.warn('[Cookie Debug] Not running in browser environment (document undefined)');
-    return null;
-  }
-  
-  const cookieString = document.cookie;
-  
-  // Debug: Show all available cookies (truncated for readability)
-  console.log(`[Cookie Debug] All cookies: ${cookieString ? cookieString.substring(0, 200) + (cookieString.length > 200 ? '...' : '') : '(empty)'}`);
-  console.log(`[Cookie Debug] Looking for cookie: "${name}"`);
-  
-  if (!cookieString) {
-    console.log(`[Cookie Debug] document.cookie is empty - returning null`);
+  if (typeof document === 'undefined' || !document.cookie) {
     return null;
   }
 
-  // Split by ';' to handle both '; ' and ';' (browser variations)
-  const cookies = cookieString.split(';');
-  console.log(`[Cookie Debug] Parsed ${cookies.length} cookie(s)`);
+  // Split by ';' delimiter (handles both '; ' and ';' variations)
+  const cookies = document.cookie.split(';');
   
-  for (let i = 0; i < cookies.length; i++) {
-    const cookie = cookies[i];
+  for (const cookie of cookies) {
     const trimmed = cookie.trim();
-    
-    console.log(`[Cookie Debug] Checking cookie[${i}]: "${trimmed.substring(0, 50)}${trimmed.length > 50 ? '...' : ''}"`);
     
     if (trimmed.startsWith(`${name}=`)) {
       const value = trimmed.substring(name.length + 1);
-      console.log(`[Cookie Debug] Found ${name} = "${value.substring(0, 30)}${value.length > 30 ? '...' : ''}"`);
       
       try {
-        const decoded = decodeURIComponent(value);
-        console.log(`[Cookie Debug] Successfully decoded ${name}: "${decoded.substring(0, 30)}${decoded.length > 30 ? '...' : ''}"`);
-        return decoded;
-      } catch (decodeError) {
-        console.log(`[Cookie Debug] Decoding failed for ${name}, returning raw value`);
-        console.log(`[Cookie Debug] Raw value: "${value.substring(0, 30)}${value.length > 30 ? '...' : ''}"`);
+        return decodeURIComponent(value);
+      } catch {
+        // If decoding fails, return raw value
         return value;
       }
     }
   }
   
-  // Cookie not found - this is expected on login page (no csrf yet)
-  console.log(`[Cookie Debug] ${name} NOT FOUND in cookies`);
   return null;
 }
 
+/**
+ * Checks if a cookie is present (used for auth state detection).
+ * 
+ * @returns true if user appears to be authenticated
+ */
+export function isAuthenticated(): boolean {
+  // Only check auth_token visibility - csrf_token presence implies auth too
+  return getCookie('auth_token') !== null;
+}
+
+// --- Rate Limit Detection ---
+
+/**
+ * Extracts Retry-After header value if present.
+ * Can be seconds (integer) or HTTP-date (RFC 7231).
+ * 
+ * @param response - Fetch Response object
+ * @returns Seconds to wait, or null if no Retry-After header
+ */
+function getRetryAfterSeconds(response: Response): number | null {
+  const header = response.headers.get('Retry-After');
+  if (!header) return null;
+  
+  // Try integer (seconds) first
+  const seconds = parseInt(header, 10);
+  if (!Number.isNaN(seconds)) {
+    return seconds;
+  }
+  
+  // RFC 7231 HTTP-date format (e.g., "Wed, 21 Oct 2015 07:28:00 GMT")
+  const date = new Date(header);
+  if (!Number.isNaN(date.getTime())) {
+    const diffMs = date.getTime() - Date.now();
+    return Math.max(1, Math.ceil(diffMs / 1000));
+  }
+  
+  return null;
+}
+
+// --- Request Building ---
+
+/**
+ * Security context tracking for diagnostics.
+ * Tracks whether we're in same-origin (proxy) mode vs cross-origin mode.
+ */
+const IS_SAME_ORIGIN = !API_BASE.startsWith('http');
+
+/**
+ * Prepares headers with CSRF token injection.
+ * 
+ * @param skipCsrf - Whether to skip CSRF validation (GET, initial login)
+ * @param customHeaders - Additional headers to merge in
+ * @returns Complete headers object
+ */
+function buildHeaders(
+  skipCsrf: boolean,
+  customHeaders?: Record<string, string>
+): Record<string, string> {
+  const finalHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(customHeaders || {}),
+  };
+
+  if (!skipCsrf && IS_SAME_ORIGIN) {
+    const csrfToken = getCookie('csrf_token');
+    
+    if (csrfToken) {
+      // Backend expects lowercase header name (Netlify normalizes headers)
+      finalHeaders['X-CSRF-Token'] = csrfToken;
+      debug(`CSRF token injected (${csrfToken.substring(0, 8)}...)`);
+    } else {
+      // Warn only in development for non-login requests
+      if (DEBUG_MODE) {
+        warn('No CSRF token found - ensure endpoint allows CSRF bypass or user is not logged in');
+      }
+    }
+  }
+
+  return finalHeaders;
+}
+
+// --- Timeout Wrapper ---
+
+/**
+ * Wraps a promise with a timeout. Rejects if the operation takes too long.
+ * 
+ * @param promise - The operation to wrap
+ * @param timeoutMs - Milliseconds before timeout
+ * @param message - Custom timeout error message
+ * @returns Original promise result, or timeout rejection
+ */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout>;
+  
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutHandle!);
+  }
+}
+
+// --- Core Fetch Function ---
+
 interface SecureFetchOptions extends RequestInit {
+  /** Skip CSRF token injection (GET, initial login, webhooks) */
   skipCsrf?: boolean;
+  /** Whether to retry on transient errors (default: true) */
+  retryOnTransientError?: boolean;
+  /** Override default timeout in milliseconds */
+  timeoutMs?: number;
 }
 
 /**
- * Wrapper for fetch that automatically handles:
- * 1. Credentials (include cookies)
- * 2. CSRF Token injection (Double-Submit pattern)
- * 3. Error parsing
+ * Main secure fetch wrapper. Handles:
+ * 1. CSRF token injection
+ * 2. Credentials (cookies)
+ * 3. Timeout protection
+ * 4. Structured error responses
+ * 5. Optional retry for transient errors
  * 
- * DEBUG: Enables extensive logging when SECURE_FETCH_DEBUG env var is true
+ * @param url - Relative path (will be prefixed with API_BASE) or absolute URL
+ * @param options - Fetch options with secureFetch extensions
+ * @returns Parsed JSON response
+ * @throws ApiError with status code and error details
  */
 export async function secureFetchJson<T = any>(
   url: string,
   options: SecureFetchOptions = {}
 ): Promise<T> {
-  const { skipCsrf = false, headers = {}, ...restOptions } = options;
+  const {
+    skipCsrf = false,
+    retryOnTransientError = true,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    headers = {},
+    ...restOptions
+  } = options;
 
-  // Enable debug mode via environment variable (set in .env.local or build)
-  const isDebugEnabled = import.meta.env?.VITE_SECURE_FETCH_DEBUG === 'true';
-  if (isDebugEnabled) {
-    console.log('[SecureFetch] DEBUG MODE ENABLED');
-    console.log('[SecureFetch] URL:', url);
-    console.log('[SecureFetch] Method:', restOptions.method || 'GET');
-  }
+  // ✅ Clean URL construction (legacy shim removed in Phase 2)
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE}/${url.replace(/^\/+/, '')}`;
+  const method = (restOptions.method || 'GET').toUpperCase();
 
-  // 1. Prepare Headers - Use Record<string, string> to allow dynamic property assignment
-  const finalHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(headers as Record<string, string>),
+  debug(`Request: ${method} ${fullUrl}`);
+
+  // Build complete request config
+  const requestConfig: RequestInit = {
+    ...restOptions,
+    headers: buildHeaders(skipCsrf, headers as Record<string, string>),
+    credentials: 'include', // Essential for cookie-based auth
   };
 
-  // 2. Inject CSRF Token if not skipped
-  if (!skipCsrf) {
-    const csrfToken = getCookie('csrf_token');
-    
-    if (csrfToken) {
-      // CRITICAL: Use the exact header name the backend expects
-      // Backend middleware checks 'x-csrf-token' (lowercase)
-      finalHeaders['X-CSRF-Token'] = csrfToken;
-      console.debug('[SecureFetch] CSRF token injected:', `${csrfToken.substring(0, 8)}...`);
+  // Retry logic for transient failures
+  let lastError: unknown = null;
+  let attempts = 0;
+
+  while (attempts <= MAX_RETRIES) {
+    try {
+      attempts++;
       
-      if (isDebugEnabled) {
-        console.log('[SecureFetch] Headers after CSRF injection:', finalHeaders);
+      debug(`Attempt ${attempts}/${MAX_RETRIES + 1}`);
+      
+      const response = await withTimeout(
+        fetch(fullUrl, requestConfig),
+        timeoutMs,
+        `Request timed out after ${timeoutMs}ms`
+      );
+
+      // Handle auth/CSRF failures specially
+      if ((response.status === 401 || response.status === 403) && retryOnTransientError) {
+        const isCsrfFailure = response.status === 403;
+        const retryAfter = getRetryAfterSeconds(response);
+
+        warn(
+          isCsrfFailure
+            ? 'CSRF validation failed - token may be stale or blocked'
+            : 'Authentication failed - session may be expired'
+        );
+
+        if (retryAfter) {
+          debug(`Retry-After suggests waiting ${retryAfter}s before retrying`);
+        }
+
+        throw await buildApiError(response, {
+          hint: isCsrfFailure
+            ? 'Refresh the page to obtain a new CSRF token.'
+            : 'Please log in again.',
+          recoverable: true,
+          retryAfter,
+        });
+      }
+
+      // Success path
+      if (!response.ok) {
+        throw await buildApiError(response);
+      }
+
+      const responseData = (await response.json()) as T;
+      debug('Response parsed successfully');
+      return responseData;
+
+    } catch (err) {
+      lastError = err;
+      
+      // Don't retry on certain errors
+      if (err instanceof ApiError && (err.status === 400 || err.status === 404 || err.status === 429)) {
+        debug('Skipping retry for client error:', err.status);
+        break;
+      }
+
+      // Check if we should retry
+      if (attempts <= MAX_RETRIES && retryOnTransientError) {
+        debug('Retrying due to transient error...');
+        await sleep(RETRY_DELAY_MS * attempts); // Exponential backoff
+        continue;
+      }
+
+      // Out of retries or non-retryable error
+      break;
+    }
+  }
+
+  // All attempts exhausted
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  
+  throw new ApiError('Unknown error occurred', 0, { cause: lastError });
+}
+
+/** Sleep utility for retry delays */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// --- Structured Error Types ---
+
+/**
+ * Structured API error carrying HTTP status and server-provided details.
+ * Extends Error so it works with standard try/catch and instanceof checks.
+ */
+export class ApiError extends Error {
+  public readonly status: number;
+  public readonly data: Record<string, unknown>;
+  public readonly recoverable: boolean;
+  public readonly retryAfter?: number; // Seconds to wait before retry
+
+  constructor(
+    message: string,
+    status: number,
+    data: Record<string, unknown> = {},
+    options: { recoverable?: boolean; retryAfter?: number } = {}
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.data = data;
+    this.recoverable = options.recoverable ?? false;
+    this.retryAfter = options.retryAfter;
+
+    // Maintains proper prototype chain when targeting ES5
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
+/**
+ * Reads the response body and constructs a structured ApiError.
+ * Handles non-JSON bodies gracefully.
+ */
+async function buildApiError(
+  response: Response,
+  extras: Record<string, unknown> = {}
+): Promise<ApiError> {
+  let errorData: Record<string, unknown> = { error: 'Unknown error' };
+  const status = response.status;
+
+  try {
+    const errorText = await response.text();
+
+    if (errorText) {
+      try {
+        const parsed = JSON.parse(errorText);
+        errorData =
+          parsed && typeof parsed === 'object'
+            ? (parsed as Record<string, unknown>)
+            : { error: String(parsed) };
+      } catch {
+        // Not JSON - likely an HTML error page or plain text
+        errorData = { error: errorText.slice(0, 300) || response.statusText };
       }
     } else {
-      // Only warn if we are not on the login page (where CSRF might not be set yet)
-      // Login is the first step - no csrf_token exists yet
-      if (!url.includes('/login')) {
-        console.warn('[SecureFetch] No CSRF token found in cookies for:', url);
-        console.warn('[SecureFetch] This may indicate:');
-        console.warn('[SecureFetch]  1. Not logged in yet (auth_token cookie missing)');
-        console.warn('[SecureFetch]  2. CSRF cookie blocked by SameSite/Secure settings');
-        console.warn('[SecureFetch]  3. Frontend domain mismatch with cookie domain');
-        
-        // Optional: Trigger debug info dump
-        if (isDebugEnabled) {
-          console.log('[SecureFetch] Document cookie full content:', document.cookie);
-        }
-      }
+      errorData = { error: response.statusText || `HTTP ${status}` };
     }
+  } catch {
+    errorData = { error: response.statusText || `HTTP ${status}` };
   }
 
-  // 3. Execute Request
-  if (isDebugEnabled) {
-    console.log('[SecureFetch] Final request config:', {
-      url,
-      method: restOptions.method || 'GET',
-      headers: finalHeaders,
-      credentials: 'include'
-    });
-  }
+  const message = typeof errorData.error === 'string' ? errorData.error : `HTTP ${status}`;
 
-  const response = await fetch(url, {
-    ...restOptions,
-    headers: finalHeaders,
-    credentials: 'include', // CRITICAL: Sends cookies with cross-origin requests
-  });
+  debug(`Request failed [${status}]:`, message);
 
-  // Debug: Show response details
-  if (isDebugEnabled) {
-    console.log('[SecureFetch] Response status:', response.status);
-    console.log('[SecureFetch] Response headers:', [...response.headers.entries()]);
-  }
-
-  // 4. Handle Errors
-  if (!response.ok) {
-    let errorData: any = { error: 'Unknown error' };
-    const errorStatus = response.status;
-    
-    try {
-      const errorText = await response.text();
-      console.error('[SecureFetch] Raw error response:', errorText.substring(0, 500));
-      
-      try {
-        errorData = JSON.parse(errorText);
-      } catch {
-        errorData = { error: errorText || response.statusText };
-      }
-    } catch {
-      errorData = { error: response.statusText };
-    }
-
-    const error: any = new Error(errorData.error || `HTTP ${errorStatus}`);
-    error.status = errorStatus;
-    error.data = errorData;
-    
-    console.error('[SecureFetch] Error thrown:', {
-      message: error.message,
-      status: error.status,
-      data: errorData
-    });
-    
-    throw error;
-  }
-
-  // 5. Parse JSON
-  try {
-    const responseData = await response.json();
-    if (isDebugEnabled) {
-      console.log('[SecureFetch] Response parsed successfully');
-    }
-    return responseData;
-  } catch (parseError) {
-    console.error('[SecureFetch] Failed to parse JSON response:', parseError);
-    throw new Error('Invalid JSON response');
-  }
+  return new ApiError(message, status, { ...errorData, ...extras });
 }
 
-// ===========================================
-// UTILITY: Force reload page to reset session
-// Useful when CSRF/auth token issues occur
-// ===========================================
-export function resetSessionAndReload(): void {
-  console.log('[FetchHelper] Resetting session and reloading...');
-  // Optional: Clear cookies before reload
-  document.cookie.split(';').forEach(cookie => {
-    const cookieName = cookie.split('=')[0].trim();
-    document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+// --- Convenience Helpers ---
+
+/**
+ * GET request wrapper. CSRF is skipped by default for read-only operations.
+ */
+export function apiGet<T = any>(
+  url: string,
+  options?: Omit<SecureFetchOptions, 'skipCsrf'>
+): Promise<T> {
+  return secureFetchJson<T>(url, { method: 'GET', skipCsrf: true, ...options });
+}
+
+/**
+ * POST request wrapper. CSRF is enabled by default for state-changing operations.
+ */
+export function apiPost<T = any>(
+  url: string,
+  body?: unknown,
+  options?: Omit<SecureFetchOptions, 'skipCsrf' | 'body'>
+): Promise<T> {
+  return secureFetchJson<T>(url, {
+    method: 'POST',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    skipCsrf: false,
+    ...options,
   });
+}
+
+/**
+ * PUT request wrapper. CSRF is enabled by default.
+ */
+export function apiPut<T = any>(
+  url: string,
+  body?: unknown,
+  options?: Omit<SecureFetchOptions, 'skipCsrf' | 'body'>
+): Promise<T> {
+  return secureFetchJson<T>(url, {
+    method: 'PUT',
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    skipCsrf: false,
+    ...options,
+  });
+}
+
+/**
+ * DELETE request wrapper. CSRF is enabled by default.
+ */
+export function apiDelete<T = any>(
+  url: string,
+  options?: Omit<SecureFetchOptions, 'skipCsrf'>
+): Promise<T> {
+  return secureFetchJson<T>(url, { method: 'DELETE', skipCsrf: false, ...options });
+}
+
+// --- Session Management ---
+
+/**
+ * Clears visible cookies (csrf_token) and reloads the page.
+ * 
+ * IMPORTANT: HttpOnly cookies (auth_token) CANNOT be cleared from JavaScript.
+ * They must be cleared by the server via Set-Cookie with an expired date.
+ * This means a proper logout requires calling the backend logout endpoint.
+ */
+export function resetSessionAndReload(): void {
+  debug('Resetting session...');
+
+  // Clear all visible cookies
+  document.cookie.split(';').forEach((cookie) => {
+    const cookieName = cookie.split('=')[0].trim();
+    if (!cookieName) return;
+
+    // Clear for current path
+    document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+
+    // Also attempt to clear for parent domain (if applicable)
+    const hostParts = window.location.hostname.split('.');
+    if (hostParts.length > 1) {
+      const parentDomain = `.${hostParts.slice(-2).join('.')}`;
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${parentDomain}`;
+    }
+  });
+
   window.location.reload();
 }
+
+/**
+ * Proper logout: calls backend to clear HttpOnly cookies, then redirects.
+ * Falls back to client-side reset if the call fails.
+ */
+export async function logout(logoutEndpoint: string = '/logout'): Promise<void> {
+  try {
+    await secureFetchJson(logoutEndpoint, { method: 'POST' });
+  } catch (err) {
+    warn('Server logout failed, falling back to client reset:', err);
+  } finally {
+    resetSessionAndReload();
+  }
+}
+
+/**
+ * Checks authentication status without making a network request.
+ * Note: This is a local-only check - session could have expired server-side.
+ */
+export function checkAuthStatus(): { isAuthenticated: boolean; reason?: string } {
+  const authToken = getCookie('auth_token');
+  const csrfToken = getCookie('csrf_token');
+
+  if (!authToken) {
+    return { isAuthenticated: false, reason: 'No auth_token cookie found' };
+  }
+
+  // Basic JWT structure check (header.payload.signature)
+  const jwtParts = authToken.split('.');
+  if (jwtParts.length !== 3) {
+    return { isAuthenticated: false, reason: 'Invalid JWT structure' };
+  }
+
+  // Decode JWT payload to check expiration (client-side best effort)
+  try {
+    const payloadBase64 = jwtParts[1];
+    const payloadJson = atob(payloadBase64);
+    const payload = JSON.parse(payloadJson);
+
+    // Check exp claim if present (Unix timestamp)
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      return { isAuthenticated: false, reason: 'JWT has expired' };
+    }
+  } catch {
+    // If JWT decoding fails, still report as authenticated
+    // (server will reject invalid tokens on next request)
+    debug('Warning: Could not decode JWT payload');
+  }
+
+  if (!csrfToken) {
+    warn('auth_token exists but csrf_token is missing - possible session corruption');
+  }
+
+  return { isAuthenticated: true };
+}
+
+// --- Health Check ---
+
+/**
+ * Ping endpoint health without authentication.
+ * Useful for checking if backend is reachable.
+ */
+export async function pingHealth(): Promise<boolean> {
+  try {
+    await fetch(`${API_BASE}/health`, {
+      method: 'GET',
+      credentials: 'omit', // No auth needed for health check
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// --- Export Main Entry Point ---
+export default secureFetchJson;

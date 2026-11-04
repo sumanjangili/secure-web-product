@@ -23,9 +23,8 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [checking, setChecking] = useState(true);
 
-  // Memoize handlers to prevent unnecessary re-renders
   const handleSaveConsent = useCallback(async (acceptAnalytics: boolean) => {
-    if (checking || loading) return; // Prevent double-clicks and race conditions
+    if (checking || loading) return; 
     
     setLoading(true);
     setErrorMessage(null);
@@ -40,24 +39,23 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
     const previousStorage = localStorage.getItem(CONSENT_STORAGE_KEY);
     
     try {
-      // Optimistic Update: Save to local storage immediately for UX
+      // Optimistic Update
       localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(consentData));
       setAnalyticsConsent(acceptAnalytics);
 
-      // Sync to Server
-      await secureFetchJson("/.netlify/functions/save-consent", {
+      // ✅ FIXED: Use short path
+      await secureFetchJson("/save-consent", {
         method: "POST",
         body: JSON.stringify(consentData),
       });
 
-      // Notify global manager
       ConsentManager.notifyConsentUpdated();
       setVisible(false);
 
     } catch (error: any) {
       console.error("Failed to save consent:", error);
       
-      // Rollback: Revert local storage and cache to previous state
+      // Rollback
       if (previousStorage) {
         localStorage.setItem(CONSENT_STORAGE_KEY, previousStorage);
         try {
@@ -71,7 +69,6 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
         setAnalyticsConsent(false);
       }
 
-      // Set user-friendly error message
       if (error.status === 401) {
         setErrorMessage("Session expired. Please log in to save preferences.");
       } else {
@@ -88,25 +85,17 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
 
   useEffect(() => {
     const checkConsent = async () => {
-      // 1. Check local storage first
       const stored = localStorage.getItem(CONSENT_STORAGE_KEY);
       
       if (stored) {
         try {
           const parsed: ConsentData = JSON.parse(stored);
-          // Validate version and structure
           if (parsed.version === "1.0" && 
               typeof parsed.essential === 'boolean' && 
               typeof parsed.analytics === 'boolean') {
             
             setAnalyticsConsent(parsed.analytics);
-            // If essential is true, we assume consent is valid and hide banner
-            // If essential is false, we show the banner (though this is rare in local storage)
-            if (parsed.essential) {
-              setVisible(false);
-            } else {
-              setVisible(true);
-            }
+            setVisible(!parsed.essential);
             setChecking(false);
             return;
           }
@@ -116,27 +105,20 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
         }
       }
 
-      // 2. If no local consent, check server
       try {
-        const serverConsent = await secureFetchJson<ConsentData>("/.netlify/functions/get-consent");
+        const serverConsent = await secureFetchJson<ConsentData>("/get-consent");
         
-        // Check if consent is actually given
         if (serverConsent.essential) {
-          // Server says "Consent recorded"
           localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify(serverConsent));
           setAnalyticsConsent(serverConsent.analytics);
           setVisible(false);
         } else {
-          // Server says "No consent recorded"
           setVisible(true);
         }
       } catch (error: any) {
-        // If 401 (not logged in) or network error, SHOW the banner
         if (error?.status === 401 || !error?.status) {
-          console.log("Not authenticated or error, showing consent banner.");
           setVisible(true);
         } else {
-          // Other errors -> Show banner to be safe
           console.error("Consent check failed:", error);
           setVisible(true);
         }
@@ -148,7 +130,7 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
     checkConsent();
   }, [userSessionKey]);
 
-  // DEV TOOL: Add a button to reset consent for testing
+  // ✅ FIXED: Gate dev button behind environment check
   const handleResetConsent = () => {
     localStorage.removeItem(CONSENT_STORAGE_KEY);
     window.location.reload();
@@ -156,16 +138,21 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
 
   if (checking) return null;
   
-  if (!visible) return (
-    // Optional: Show a small "Reset" button in dev mode to test the banner
-    <button 
-      onClick={handleResetConsent}
-      style={{ position: 'fixed', top: 10, right: 10, zIndex: 9999, opacity: 0.5, fontSize: '0.8rem' }}
-      title="Reset Consent (Dev Mode)"
-    >
-      Reset Consent (Dev)
-    </button>
-  );
+  if (!visible) {
+    // Only show reset button in development mode
+    if (import.meta.env.DEV) {
+      return (
+        <button 
+          onClick={handleResetConsent}
+          style={{ position: 'fixed', top: 10, right: 10, zIndex: 9999, opacity: 0.5, fontSize: '0.8rem' }}
+          title="Reset Consent (Dev Mode)"
+        >
+          Reset Consent (Dev)
+        </button>
+      );
+    }
+    return null;
+  }
 
   return (
     <section

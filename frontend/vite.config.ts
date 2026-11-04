@@ -20,12 +20,13 @@ export default defineConfig({
     host: "localhost",
     port: 5173,
     open: true,
+    // CRITICAL: Match netlify.toml /api/* proxy
     proxy: {
-      "/.netlify/functions": {
-        // Match the port shown in Netlify CLI log (9999)
-        target: "http://localhost:9999", 
+      "/api": {
+        target: "http://localhost:9999",
         changeOrigin: true,
         secure: false,
+        // rewrite: (pathname) => pathname.replace(/^\/api/, ""),
       },
     },
   },
@@ -40,6 +41,13 @@ export default defineConfig({
       },
     },
     assetsInlineLimit: 4096,
+    // Ensure CSS is properly extracted (important for CSP)
+    cssCodeSplit: true,
+  },
+
+  // Environment-specific configurations
+  define: {
+    'process.env': {},
   },
 
   test: {
@@ -54,6 +62,19 @@ export default defineConfig({
     },
     deps: {
       inline: ["vitest", "vitest-environment-jsdom"],
+    },
+  },
+
+  // Vite preview configuration for local production testing
+  preview: {
+    port: 4173,
+    host: "localhost",
+    proxy: {
+      "/api": {
+        target: "http://localhost:9999",
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 });

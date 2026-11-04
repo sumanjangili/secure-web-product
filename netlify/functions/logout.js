@@ -2,48 +2,133 @@
 
 /**
  * Logout Handler
- * 
+ *
  * Strategy:
- * 1. Attempt CSRF validation (defense in depth).
- * 2. If CSRF fails, LOG WARNING but CONTINUE to clear cookies.
- *    (We must ensure the user can log out even if their session is corrupted).
- * 3. Clear both auth_token and csrf_token immediately.
+ * 1. CSRF validation is NON-BLOCKING - user must always be able to logout
+ * 2. Clear both auth_token and csrf_token immediately with proper attributes
  */
+
 const { validateCsrf } = require('./_middleware/csrf-check');
 
-exports.handler = async (event, context) => {
-  // 1. Method Check
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+// --- Allowed Origins Configuration ---
+const ALLOWED_ORIGINS = [
+  'https://app.indoscient.in',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+];
+
+function getAllowedOrigin(requestedOrigin) {
+  if (!requestedOrigin) return null;
+
+  const normalized = requestedOrigin.toLowerCase();
+  for (const origin of ALLOWED_ORIGINS) {
+    if (normalized === origin.toLowerCase()) return origin;
   }
 
-  // 2. CSRF Check (Non-blocking)
+  // Localhost variants permitted only outside Netlify
+  if (normalized.includes('localhost') && !process.env.NETLIFY) {
+    return requestedOrigin;
+  }
+
+  return null;
+}
+
+/**
+ * Single source of truth for production detection.
+ * NETLIFY is the reliable signal at function runtime; NODE_ENV often is not set.
+ */
+function isProduction() {
+  return process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
+}
+
+function jsonResponse(statusCode, data, extraHeaders = {}) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      ...extraHeaders,
+    },
+    body: JSON.stringify(data),
+  };
+}
+
+/**
+ * Builds Set-Cookie strings that delete a cookie.
+ * 
+ * With the /api/* proxy in netlify.toml, cookies are SAME-ORIGIN, so we DON'T
+ * need the Domain attribute. This simplifies cookie deletion significantly.
+ * 
+ * @param {string} name      Cookie name
+ * @param {boolean} httpOnly Whether the original cookie was HttpOnly
+ */
+function buildDeletionCookies(name, { httpOnly }) {
+  const isProd = isProduction();
+
+  // Build attributes as discrete entries so we never emit empty slots
+  const attrs = [];
+
+  if (httpOnly) attrs.push('HttpOnly');
+  attrs.push('Path=/');
+  attrs.push(`Expires=${new Date(0).toUTCString()}`);
+  attrs.push('Max-Age=0');
+  if (isProd) attrs.push('Secure');
+
+  // Mirror SameSite mode from login (None in prod, Lax in dev)
+  // Even though we're now same-origin via proxy, this maintains consistency
+  attrs.push(`SameSite=${isProd ? 'None' : 'Lax'}`);
+
+  // ADD Domain attribute to match login.js!
+  if (isProd) {
+    return [`${name}=; ${attrs.join('; ')}; Domain=.indoscient.in`];
+  }
+  return [`${name}=; ${attrs.join('; ')}`];
+}
+
+exports.handler = async (event) => {
+  // 1. CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const allowedOrigin = getAllowedOrigin(event.headers.origin);
+
+    return jsonResponse(204, {}, {
+      'Access-Control-Allow-Origin': allowedOrigin || '*',
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+      'Access-Control-Max-Age': '86400',
+      'Vary': 'Origin',
+    });
+  }
+
+  // 2. Method Check
+  if (event.httpMethod !== 'POST') {
+    return jsonResponse(405, { error: 'Method Not Allowed' });
+  }
+
+  // 3. CSRF Check — NON-BLOCKING (nuisance-class protection only)
   const csrfError = validateCsrf(event);
   if (csrfError) {
-    // Log the failure but DO NOT return the error.
-    // We still want to clear the cookies to force a logout.
-    console.warn('[Logout] CSRF validation failed, but proceeding to clear cookies.');
+    console.warn('[Logout] CSRF validation failed; clearing cookies anyway.');
   }
 
-  // 3. Clear Cookies
-  const isProd = process.env.NODE_ENV === 'production';
-  const secureFlag = isProd ? 'Secure' : '';
-  const samesiteFlag = isProd ? 'Strict' : 'Lax'; // Match login
-  const expires = new Date(0).toUTCString(); // Expire immediately (1970-01-01)
+  // 4. Build deletion cookies
+  const deletions = [
+    ...buildDeletionCookies('auth_token', { httpOnly: true }),
+    ...buildDeletionCookies('csrf_token', { httpOnly: false }),
+  ];
 
-  return {
-    statusCode: 200,
-    headers: {
-      'Set-Cookie': [
-        // Clear Auth Token
-        `auth_token=; HttpOnly; ${secureFlag}; SameSite=Strict; Path=/; Expires=${expires}; Max-Age=0`,
-        // Clear CSRF Token
-        `csrf_token=; ${secureFlag}; SameSite=Strict; Path=/; Expires=${expires}; Max-Age=0`
-      ],
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-      'X-Content-Type-Options': 'nosniff'
-    },
-    body: JSON.stringify({ success: true, message: 'Logged out successfully' })
-  };
+  // 5. Resolve origin
+  const allowedOrigin = getAllowedOrigin(event.headers.origin);
+
+  return jsonResponse(200, {
+    success: true,
+    message: 'Logged out successfully',
+  }, {
+    'Set-Cookie': deletions,
+    'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
+    'Access-Control-Allow-Credentials': 'true',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'X-Content-Type-Options': 'nosniff',
+    'Vary': 'Origin',
+  });
 };

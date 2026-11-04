@@ -1,5 +1,5 @@
 // frontend/src/components/UserSettings.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import MFASetup from "./MFASetup";
 import { secureFetchJson } from "../lib/fetch-helper"; 
 
@@ -12,25 +12,33 @@ interface UserSettingsProps {
   sessionKey?: string;
 }
 
+interface AuditLogEntry {
+  id: string;
+  event_type: string;
+  details: string | Record<string, unknown>;
+  timestamp: string;
+  ip_address?: string;
+  user_id?: string;
+}
+
 const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showMFASetup, setShowMFASetup] = useState(!user.mfaEnabled);
   const [generatedCodes, setGeneratedCodes] = useState<string[] | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   
   // State for Audit Logs
   const [showLogs, setShowLogs] = useState(false);
-  const [logs, setLogs] = useState<any[]>([]);
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
+  // ✅ FIXED: Proper timeout instead of fragile cleanup effect
   useEffect(() => {
-    return () => {
-      if (generatedCodes) {
-        setGeneratedCodes(null);
-      }
-    };
+    if (!generatedCodes) return;
+    const timer = setTimeout(() => setGeneratedCodes(null), 30_000);
+    return () => clearTimeout(timer);
   }, [generatedCodes]);
 
   const handleManageBackupCodes = async () => {
@@ -38,15 +46,13 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     setMessage(null);
 
     try {
-      const data = await secureFetchJson<{ codes: string[] }>("/.netlify/functions/generate-backup-codes", {
+      // ✅ FIXED: Use short path, removed redundant userId in body
+      const data = await secureFetchJson<{ codes: string[] }>("/generate-backup-codes", {
         method: "POST",
-        body: JSON.stringify({ userId: user.id }),
       });
 
       setGeneratedCodes(data.codes);
       setMessage({ type: "success", text: "New backup codes generated! Save them now." });
-      setTimeout(() => setGeneratedCodes(null), 30000);
-
     } catch (error: any) {
       setMessage({ 
         type: "error", 
@@ -57,12 +63,11 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     }
   };
 
-  // Handler to fetch audit logs
-  const handleFetchLogs = async () => {
+  const handleFetchLogs = useCallback(async () => {
     setLoadingLogs(true);
     setMessage(null);
     try {
-      const data = await secureFetchJson<{ logs: any[]; count: number }>("/.netlify/functions/audit_log");
+      const data = await secureFetchJson<{ logs: AuditLogEntry[]; count: number }>("/audit_log");
       setLogs(data.logs);
       setShowLogs(true);
       setMessage({ type: "success", text: `Loaded ${data.count} recent log entries.` });
@@ -74,7 +79,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     } finally {
       setLoadingLogs(false);
     }
-  };
+  }, []);
 
   const handleDeleteRequest = async () => {
     if (!confirming) {
@@ -86,10 +91,9 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     setMessage(null);
 
     try {
-      await secureFetchJson("/.netlify/functions/delete-user", {
+      await secureFetchJson("/delete-user", {
         method: "POST",
         body: JSON.stringify({ 
-          userId: user.id,
           reason: "GDPR Right to Erasure",
           timestamp: new Date().toISOString()
         }),
@@ -107,6 +111,22 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
       setDeleting(false);
       setConfirming(false);
     }
+  };
+
+  // ✅ FIXED: Move message to TOP so it's visible everywhere
+  const MessageDisplay = () => {
+    if (!message) return null;
+    return (
+      <div style={{ 
+        padding: "0.75rem", 
+        marginBottom: "1rem", 
+        borderRadius: "4px",
+        backgroundColor: message.type === "error" ? "#ffebee" : "#e8f5e9",
+        color: message.type === "error" ? "#c62828" : "#2e7d32"
+      }}>
+        {message.text}
+      </div>
+    );
   };
 
   // Styles
@@ -137,6 +157,9 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
   return (
     <div style={{ maxWidth: "600px", margin: "2rem auto", padding: "1rem", border: "1px solid #ddd", borderRadius: "8px" }}>
       <h2>Account Management</h2>
+      
+      {/* ✅ FIXED: Message rendered at TOP of component */}
+      <MessageDisplay />
       
       {/* SECTION 1: Security Status & MFA Setup */}
       <div style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #ddd", borderRadius: "4px", backgroundColor: "#fafafa" }}>
@@ -216,7 +239,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
         </button>
       </div>
 
-      {/* SECTION 2: System Audit Logs (NEW) */}
+      {/* SECTION 2: System Audit Logs */}
       <div style={{ marginTop: "2rem", padding: "1rem", border: "1px solid #ddd", borderRadius: "4px", backgroundColor: "#f9f9f9" }}>
         <h3 style={{ marginTop: 0, marginBottom: "0.5rem", color: "#333" }}>System Audit Logs</h3>
         <p style={{ fontSize: "0.9rem", color: "#666", marginBottom: "1rem" }}>
@@ -275,18 +298,6 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
       <div style={{ marginTop: "2rem", borderTop: "1px solid #eee", paddingTop: "1rem" }}>
         <h3 style={{ color: "#d32f2f", marginTop: 0 }}>Danger Zone</h3>
         <p>Once you delete your account, there is no going back. Please be certain.</p>
-
-        {message && (
-          <div style={{ 
-            padding: "0.75rem", 
-            marginBottom: "1rem", 
-            borderRadius: "4px",
-            backgroundColor: message.type === "error" ? "#ffebee" : "#e8f5e9",
-            color: message.type === "error" ? "#c62828" : "#2e7d32"
-          }}>
-            {message.text}
-          </div>
-        )}
 
         {!confirming ? (
           <button 

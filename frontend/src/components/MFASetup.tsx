@@ -1,8 +1,9 @@
 // frontend/src/components/MFASetup.tsx
-import React, { useState } from "react";
-import { secureFetchJson } from "../lib/fetch-helper"; // ✅ Import the secure helper
+import React, { useState, useEffect, useRef } from "react";
+import { secureFetchJson } from "../lib/fetch-helper"; 
+import QRCode from 'qrcode';
 
-type Step = "enable" | "scan" | "verify" | "backup" | "complete";
+type Step = "enable" | "scan" | "backup" | "complete";
 
 interface MFASetupProps {
   onSuccess?: () => void;
@@ -10,31 +11,30 @@ interface MFASetupProps {
 
 const MFASetup: React.FC<MFASetupProps> = ({ onSuccess }) => {
   const [step, setStep] = useState<Step>("enable");
-  const [qrUrl, setQrUrl] = useState<string>("");
-  const [otpAuthUrl, setOtpAuthUrl] = useState<string>(""); // ✅ For optional manual entry
+  const [otpAuthUrl, setOtpAuthUrl] = useState<string>("");
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [inputCode, setInputCode] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+
+  // ✅ FIXED: Canvas ref for local QR generation (no third-party)
+  const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleEnableMFA = async () => {
     setLoading(true);
     setError("");
     
     try {
-      // ✅ Using secureFetchJson: Automatically handles CSRF token and credentials
+      // ✅ FIXED: Use short path
       const data = await secureFetchJson<{ 
         success: boolean; 
-        qrUrl: string;
-        otpAuthUrl: string;
+        otpAuthUrl: string; // Server returns only the otpauth:// URL, NOT pre-rendered QR
         message: string;
-      }>("/.netlify/functions/mfa-setup-init", {
+      }>("/mfa-setup-init", {
         method: "POST",
         body: JSON.stringify({}),
       });
       
-      // Store only the QR URL and otpAuthUrl (NOT the raw secret)
-      setQrUrl(data.qrUrl);
       setOtpAuthUrl(data.otpAuthUrl);
       setStep("scan");
     } catch (error: any) {
@@ -43,6 +43,23 @@ const MFASetup: React.FC<MFASetupProps> = ({ onSuccess }) => {
       setLoading(false);
     }
   };
+
+  // ✅ FIXED: Generate QR code client-side when step reaches "scan"
+  useEffect(() => {
+    if (step === "scan" && otpAuthUrl && qrCanvasRef.current) {
+      QRCode.toCanvas(qrCanvasRef.current, otpAuthUrl, { 
+        width: 220,
+        margin: 2,
+        color: {
+          dark: '#2563eb',
+          light: '#ffffff'
+        }
+      }).catch(err => {
+        console.error('QR generation failed:', err);
+        setError('Failed to generate QR code. Please try again.');
+      });
+    }
+  }, [step, otpAuthUrl]);
 
   const handleVerifyCode = async () => {
     if (!inputCode || inputCode.length !== 6) {
@@ -54,12 +71,11 @@ const MFASetup: React.FC<MFASetupProps> = ({ onSuccess }) => {
     setError("");
 
     try {
-      // ✅ Using secureFetchJson: Automatically handles CSRF token and credentials
       const data = await secureFetchJson<{ 
         success: boolean; 
         backupCodes: string[];
         message: string;
-      }>("/.netlify/functions/mfa-setup-verify", {
+      }>("/mfa-setup-verify", {
         method: "POST",
         body: JSON.stringify({ code: inputCode }),
       });
@@ -125,15 +141,18 @@ const MFASetup: React.FC<MFASetupProps> = ({ onSuccess }) => {
       {step === "scan" && (
         <div>
           <p>Scan this QR code with your authenticator app:</p>
+          
+          {/* ✅ FIXED: Local QR generation via canvas (no external image) */}
           <div style={{ textAlign: "center", margin: "1rem 0" }}>
-            <img src={qrUrl} alt="MFA QR Code" style={{ maxWidth: "100%", height: "auto" }} />
+            <canvas ref={qrCanvasRef} aria-label="MFA QR Code" />
           </div>
-                    {/* ✅ Optional: Manual Entry Link (shows otpAuthUrl, NOT raw secret) */}
+          
+          {/* Manual entry fallback */}
           <div style={{ marginTop: "1rem", textAlign: "center" }}>
             <details>
               <summary style={{ color: "#2563eb", cursor: "pointer", fontSize: "0.9rem" }}>
                 Can't scan the QR code? Use manual entry
-              </summary> {/* ✅ FIXED: Closed summary tag correctly */}
+              </summary>
               <div style={{ marginTop: "0.5rem", padding: "0.75rem", backgroundColor: "#f8f9fa", borderRadius: "4px", wordBreak: "break-all" }}>
                 <p style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
                   Open your authenticator app and select "Enter Setup Key" or "Manual Entry". Then paste this URL:
@@ -142,11 +161,12 @@ const MFASetup: React.FC<MFASetupProps> = ({ onSuccess }) => {
                   {otpAuthUrl}
                 </code>
                 <small style={{ display: "block", marginTop: "0.5rem", color: "#dc3545" }}>
-                  ⚠️ Do not share this URL. It contains your secret key.
+                  ⚠️ This URL contains your secret key. Do not share it.
                 </small>
               </div>
             </details>
           </div>
+          
           <label style={{ display: "block", marginTop: "1.5rem", marginBottom: "0.5rem", fontWeight: 500 }}>
             Enter the 6-digit code from your app:
           </label>

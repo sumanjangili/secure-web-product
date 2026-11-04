@@ -2,14 +2,39 @@
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
-const { validateCsrf } = require('./_middleware/csrf-check');
 
+// --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const jwtSecret = process.env.JWT_SECRET;
-const RATE_LIMIT_KEY_PREFIX = 'audit_log_read:';
 const MAX_REQUESTS_PER_MINUTE = 30;
-const RATE_LIMIT_WINDOW = 60;
+const RATE_LIMIT_WINDOW = 60; // 1 minute in seconds
 
+// --- Allowed Origins Configuration ---
+const ALLOWED_ORIGINS = [
+  'https://app.indoscient.in',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+];
+
+function getAllowedOrigin(requestedOrigin) {
+  if (!requestedOrigin) return null;
+  
+  const normalized = requestedOrigin.toLowerCase();
+  for (const origin of ALLOWED_ORIGINS) {
+    if (normalized === origin.toLowerCase()) {
+      return origin;
+    }
+  }
+  
+  if (normalized.includes('localhost') && !process.env.NETLIFY) {
+    return requestedOrigin;
+  }
+  
+  return null;
+}
+
+// --- Database Initialization ---
 const pool = new Pool({ 
   connectionString: dbUrl,
   ssl: process.env.NODE_ENV === 'production' 
@@ -17,45 +42,58 @@ const pool = new Pool({
     : false
 });
 
-const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS 
-  ? process.env.ADMIN_USER_IDS.split(',').map(id => id.trim().toLowerCase()) 
-  : [];
+// --- Admin User Configuration ---
+const ADMIN_USER_IDS = (() => {
+  const raw = process.env.ADMIN_USER_IDS;
+  if (!raw || !raw.trim()) return [];
+  
+  return raw
+    .split(',')
+    .map(id => id.trim().toLowerCase())
+    .filter(id => id.length > 0); // Reject empty entries
+})();
+
+/**
+ * Helper to create consistent error responses
+ */
+function jsonResponse(statusCode, data, extraHeaders = {}) {
+  return {
+    statusCode: statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      ...extraHeaders
+    },
+    body: JSON.stringify(data)
+  };
+}
 
 exports.handler = async (event, context) => {
   // 1. Handle CORS Preflight
   if (event.httpMethod === 'OPTIONS') {
-    const origin = event.headers.origin || '*';
-    return {
-      statusCode: 204,
-      headers: {
-        'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
-        'Access-Control-Max-Age': '86400'
-      }
-    };
+    const allowedOrigin = getAllowedOrigin(event.headers.origin);
+    
+    return jsonResponse(204, {}, {
+      'Access-Control-Allow-Origin': allowedOrigin || '*',
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+      'Access-Control-Max-Age': '86400',
+      'Vary': 'Origin'
+    });
   }
 
   // 2. Method Check
   if (event.httpMethod !== 'GET') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+    return jsonResponse(405, { error: 'Method Not Allowed' });
   }
 
-  // 3. CSRF Check (READ-ONLY - may consider relaxing this)
-  const csrfError = validateCsrf(event);
-  if (csrfError) {
-    console.warn('[AuditLog] CSRF validation failed:', csrfError.body);
-    return csrfError;
-  }
-
-  // 4. Rate Limiting Check
+  // 3. Authentication Check (NO CSRF required for read-only operation)
   let userId;
   try {
     const cookies = event.headers.cookie;
     if (!cookies) {
       console.error('[AuditLog] No cookies in request');
-      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required' }) };
+      return jsonResponse(401, { error: 'Authentication required' });
     }
 
     const cookiePairs = cookies.split(';');
@@ -63,7 +101,7 @@ exports.handler = async (event, context) => {
     
     if (!authTokenPair) {
       console.error('[AuditLog] auth_token cookie missing');
-      return { statusCode: 401, body: JSON.stringify({ error: 'Session cookie missing' }) };
+      return jsonResponse(401, { error: 'Session cookie missing' });
     }
 
     const token = authTokenPair.split('=')[1];
@@ -71,32 +109,34 @@ exports.handler = async (event, context) => {
     userId = decoded.userId;
   } catch (err) {
     console.error('[AuditLog] JWT verification failed:', err.message);
-    return { statusCode: 401, body: JSON.stringify({ error: 'Invalid session' }) };
+    return jsonResponse(401, { error: 'Invalid session' });
   }
 
-  // Debug logging for cookie issues
+  // Debug logging for troubleshooting
   console.log('[AuditLog] Authenticated user:', userId);
-  console.log('[AuditLog] Cookies received:', event.headers.cookie?.substring(0, 100) + '...');
 
-  const rateKey = `${RATE_LIMIT_KEY_PREFIX}${userId}`;
-  let attempts = 0;
+  // 4. Rate Limiting - ATOMIC check using Lua script
+  const rateKey = `audit_log_read:${userId}`;
   
+  let rateLimitResult;
   try {
-    const attemptsStr = await redis.get(rateKey);
-    attempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
+    rateLimitResult = await redis.checkRateLimit(
+      rateKey, 
+      MAX_REQUESTS_PER_MINUTE, 
+      RATE_LIMIT_WINDOW
+    );
   } catch (redisErr) {
-    console.warn('[AuditLog] Redis error (non-fatal):', redisErr.message);
+    console.warn('[AuditLog] Redis rate limit check failed (non-fatal):', redisErr.message);
+    rateLimitResult = { allowed: true, count: 0, ttl: RATE_LIMIT_WINDOW };
   }
 
-  if (attempts >= MAX_REQUESTS_PER_MINUTE) {
-    const ttl = await redis.ttl(rateKey).catch(() => RATE_LIMIT_WINDOW);
-    return {
-      statusCode: 429,
-      body: JSON.stringify({ 
-        error: 'Too many requests. Please slow down.', 
-        retryAfter: ttl > 0 ? ttl : RATE_LIMIT_WINDOW 
-      }),
-    };
+  if (!rateLimitResult.allowed) {
+    return jsonResponse(429, { 
+      error: 'Too many requests. Please slow down.', 
+      retryAfter: rateLimitResult.ttl 
+    }, {
+      'Retry-After': String(rateLimitResult.ttl)
+    });
   }
 
   // 5. Authenticate & Check Admin Status
@@ -122,6 +162,7 @@ exports.handler = async (event, context) => {
     let params = [];
 
     if (!isAdmin) {
+      // Regular users see ONLY their own logs
       query = `
         SELECT id, event_type, details, timestamp, ip_address 
         FROM public.audit_logs 
@@ -131,9 +172,10 @@ exports.handler = async (event, context) => {
       `;
       params = [userId, safeLimit, safeOffset];
     } else {
+      // Admins can filter by any user or see all logs
       if (filterUserId) {
         if (isNaN(parseInt(filterUserId))) {
-          return { statusCode: 400, body: JSON.stringify({ error: 'Invalid user ID filter' }) };
+          return jsonResponse(400, { error: 'Invalid user ID filter' });
         }
         query = `
           SELECT id, event_type, details, timestamp, ip_address, user_id 
@@ -156,40 +198,33 @@ exports.handler = async (event, context) => {
 
     const result = await client.query(query, params);
 
-    try {
-      await redis.incr(rateKey);
-      await redis.expire(rateKey, RATE_LIMIT_WINDOW);
-    } catch (redisErr) {
-      console.warn('[AuditLog] Redis incr failed:', redisErr.message);
-    }
+    // ✅ Rate limit already incremented by checkRateLimit - no manual increment needed
 
-    const origin = event.headers.origin;
-    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
-      ? origin 
-      : 'https://app.indoscient.in';
+    const allowedOrigin = getAllowedOrigin(event.headers.origin);
 
-    return {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': allowedOrigin,
-        'Access-Control-Allow-Credentials': 'true',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-        'X-Content-Type-Options': 'nosniff',
-      },
-      body: JSON.stringify({
-        success: true,
-        count: result.rows.length,
-        logs: result.rows
-      }),
-    };
+    return jsonResponse(200, {
+      success: true,
+      count: result.rows.length,
+      logs: result.rows.map(row => ({
+        ...row,
+        // Sanitize: Never expose IP addresses to non-admins
+        ip_address: isAdmin ? row.ip_address : 'hidden',
+        // Mask user_id for non-admin viewing other users' logs
+        user_id: isAdmin ? row.user_id : undefined
+      }))
+    }, {
+      'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
+      'Access-Control-Allow-Credentials': 'true',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'X-Content-Type-Options': 'nosniff',
+      'Vary': 'Origin'
+    });
 
   } catch (error) {
     console.error('[AuditLog] Error fetching logs:', error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Failed to retrieve audit logs' }),
-    };
+    return jsonResponse(500, { error: 'Failed to retrieve audit logs' });
   } finally {
     client.release();
   }

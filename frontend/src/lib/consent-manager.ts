@@ -76,7 +76,7 @@ class ConsentManagerClass {
 
       // 2. Send to backend
       // ✅ Using secureFetchJson: Automatically handles CSRF token and credentials
-      await secureFetchJson("/.netlify/functions/save-consent", {
+      await secureFetchJson("/save-consent", {
         method: "POST",
         body: JSON.stringify(consentData),
       });

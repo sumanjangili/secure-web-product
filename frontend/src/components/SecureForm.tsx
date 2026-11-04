@@ -11,16 +11,12 @@ interface FormData {
 }
 
 interface SecureFormProps {
-  sessionKey?: string; // Now passed from App.tsx as currentUser?.id
+  sessionKey?: string;
   onLogout?: () => void;
 }
 
-const sanitizeInput = (str: string): string => {
-  return str.replace(/[<>]/g, (char) => {
-    const map: Record<string, string> = { '<': '&lt;', '>': '&gt;' };
-    return map[char] || char;
-  });
-};
+// ✅ FIXED: Truncate only, NO HTML escaping (React handles that on render)
+const sanitizeInput = (str: string): string => str.slice(0, 10_000);
 
 const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
   const [form, setForm] = useState<FormData>({ 
@@ -33,7 +29,6 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
   const [password, setPassword] = useState<string>("");
   const [uploading, setUploading] = useState(false);
 
-  // ✅ CRITICAL FIX: Check if sessionKey exists
   const isAuthenticated = !!sessionKey;
 
   const clearSensitiveData = useCallback(() => {
@@ -56,13 +51,11 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
     
     if (uploading) return; 
 
-    // Double check auth (UI + Backend)
     if (!isAuthenticated) {
       setStatus("❌ You must be logged in to submit.");
       return;
     }
 
-    // Validation
     if (!form.title.trim()) {
       setStatus("❌ Title is required.");
       return;
@@ -90,10 +83,11 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
         throw new Error("Encryption integrity check failed. Please try again.");
       }
 
-      // Send to Backend
-      await secureFetchJson("/.netlify/functions/save-secure-data", {
+      // ✅ FIXED: Disable retry for non-idempotent POST
+      await secureFetchJson("/save-secure-data", {
         method: "POST",
         body: JSON.stringify({ ciphertext, salt, iv }),
+        retryOnTransientError: false,
       });
 
       clearSensitiveData();
@@ -145,7 +139,6 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
         </span>
       </div>
       
-      {/* Title Field */}
       <div style={{ marginBottom: "1rem" }}>
         <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 500 }}>
           Subject / Title <span style={{color: '#d32f2f'}}>*</span>
@@ -160,7 +153,6 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
         />
       </div>
 
-      {/* Description Field */}
       <div style={{ marginBottom: "1rem" }}>
         <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 500 }}>
           Description <span style={{color: '#d32f2f'}}>*</span>
@@ -176,7 +168,6 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
         />
       </div>
 
-      {/* Name & Email */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
         <div>
           <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 500 }}>Name</label>
@@ -188,7 +179,6 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
         </div>
       </div>
 
-      {/* Password */}
       <div style={{ marginBottom: "1.5rem" }}>
         <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: 500 }}>
           Encryption Password <span style={{color: '#d32f2f'}}>*</span>
