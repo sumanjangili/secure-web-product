@@ -2,33 +2,77 @@
 const { authenticator } = require('otplib');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
-const { validateCsrf } = require('./_middleware/csrf-check'); // ✅ Import CSRF validator
+const redis = require('./lib/redis');
+const { validateCsrf } = require('./_middleware/csrf-check');
+const { requireMFAIfEnrolled } = require('./_middleware/require-mfa');
 
 // Set options once globally
 authenticator.options = { window: 1 };
 
 // --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
+const MAX_INIT_PER_HOUR = 10; // Secret regeneration is a rare, deliberate act
+const RATE_LIMIT_WINDOW = 3600; // 1 hour
+
+// --- Allowed Origins Configuration ---
+const ALLOWED_ORIGINS = [
+  'https://app.indoscient.in',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+];
+
+function getAllowedOrigin(requestedOrigin) {
+  if (!requestedOrigin) return null;
+
+  const normalized = requestedOrigin.toLowerCase();
+  for (const origin of ALLOWED_ORIGINS) {
+    if (normalized === origin.toLowerCase()) return origin;
+  }
+
+  if (normalized.includes('localhost') && !process.env.NETLIFY) {
+    return requestedOrigin;
+  }
+
+  return null;
+}
 
 // Initialize Pool with SSL for Neon/Cloud Postgres
-const pool = new Pool({ 
+const pool = new Pool({
   connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production' 
-    ? { rejectUnauthorized: false } // Required for Neon/Supabase/AWS RDS in serverless
-    : false // Disable SSL for local dev
+  ssl: process.env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
+    : false
 });
 
 exports.handler = async (event, context) => {
-  // 1. Method Check
+  // 1. CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const allowedOrigin = getAllowedOrigin(event.headers.origin);
+
+    return {
+      statusCode: 204,
+      headers: {
+        'Access-Control-Allow-Origin': allowedOrigin || '*',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+        'Access-Control-Max-Age': '86400',
+        'Vary': 'Origin',
+      },
+    };
+  }
+
+  // 2. Method Check
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // 2. CSRF Check (CRITICAL)
+  // 3. CSRF Check (CRITICAL)
   const csrfError = validateCsrf(event);
   if (csrfError) return csrfError;
 
-  // 3. Authenticate via Cookie (HttpOnly)
+  // 4. Authenticate via Cookie (HttpOnly)
   let userId;
   try {
     const cookies = event.headers.cookie;
@@ -36,17 +80,14 @@ exports.handler = async (event, context) => {
       return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. No session cookie found.' }) };
     }
 
-    // Parse cookies to find 'auth_token'
     const cookiePairs = cookies.split(';');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
-    
+
     if (!authTokenPair) {
       return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. Session cookie missing.' }) };
     }
 
     const token = authTokenPair.split('=')[1];
-    
-    // Verify JWT
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     userId = decoded.userId;
   } catch (jwtErr) {
@@ -57,72 +98,110 @@ exports.handler = async (event, context) => {
     return { statusCode: 401, body: JSON.stringify({ error: 'Invalid session' }) };
   }
 
+  // 5. Rate limiting — each call regenerates a secret AND writes to the DB
+  const rateKey = `mfa_setup_init:${userId}`;
+
+  let rateLimitResult;
   try {
-    // 4. Generate MFA Secret
-    const secret = authenticator.generateSecret();
-    
-    // 5. Generate QR Code URL
-    // Format: otpauth://totp/ISSUER:LABEL?secret=SECRET&issuer=ISSUER
-    const label = encodeURIComponent("SecureProduct"); 
-    const issuer = encodeURIComponent("SecureProduct");
-    
-    // Construct the otpauth URI
-    const otpAuthUrl = `otpauth://totp/${issuer}:${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
-    
-    // Generate QR Code image URL
-    // The frontend will use this URL to display the QR code.
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpAuthUrl)}`;
+    rateLimitResult = await redis.checkRateLimit(rateKey, MAX_INIT_PER_HOUR, RATE_LIMIT_WINDOW);
+  } catch (redisErr) {
+    console.warn('[MFA Init] Redis rate limit failed (non-fatal):', redisErr.message);
+    rateLimitResult = { allowed: true, count: 0, ttl: RATE_LIMIT_WINDOW };
+  }
 
-    const client = await pool.connect();
-    try {
-      // 6. Log Audit Event (FIXED: Ensuring details structure matches DB constraint)
-      const ipAddress = context.identity?.sourceIp || 'unknown';
-      const auditTimestamp = new Date().toISOString();
-      
-      // ✅ FIX: Explicitly include event_type and timestamp in the details object
-      const safeDetails = {
-        event_type: 'MFA_INITIATED',
-        timestamp: auditTimestamp,
-        method: 'totp'
-      };
+  if (!rateLimitResult.allowed) {
+    return {
+      statusCode: 429,
+      headers: { 'Retry-After': String(rateLimitResult.ttl) },
+      body: JSON.stringify({
+        error: 'Too many MFA setup attempts. Please try again later.',
+        retryAfter: rateLimitResult.ttl,
+      }),
+    };
+  }
 
-      await client.query(
-        `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
-         VALUES ($1, $2, $3, NOW(), $4)`,
-        [userId, 'MFA_INITIATED', JSON.stringify(safeDetails), ipAddress]
-      );
-      
-      // 7. Store Secret in Database
-      // Ensure 'users' table has a 'mfa_secret' column (TEXT or VARCHAR)
-      await client.query(
-        `UPDATE users SET mfa_secret = $1, mfa_enabled = false WHERE id = $2`,
-        [secret, userId]
-      );
-    } finally {
-      client.release();
+  const client = await pool.connect();
+  try {
+    // 6. Fetch user email + current MFA state (single query)
+    const userResult = await client.query(
+      'SELECT email, mfa_enabled FROM public.users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return { statusCode: 404, body: JSON.stringify({ error: 'User not found' }) };
     }
 
-    // 8. Return Response
-    // ⚠️ CRITICAL: DO NOT return 'secret' in the JSON body.
-    // Returning the raw secret allows an XSS attacker to steal it and generate valid TOTP codes.
-    // We only return the QR URL and the otpAuthUrl (which the frontend uses to render the image).
+    const user = userResult.rows[0];
+    const isRotation = user.mfa_enabled === true;
+
+    // ✅ CONDITIONAL gate (MFA is optional):
+    // - First-time enrollment: user holds a pre-MFA token by definition —
+    //   demanding mfaVerified here created a deadlock where NOBODY could
+    //   ever enable MFA. Enrollment stays open.
+    // - Rotation of an ACTIVE secret: user has MFA on, so a legit login
+    //   session would have mfaVerified. A token lacking it mid-session is
+    //   the compromise scenario — demand proof before invalidating the
+    //   old secret. requireMFAIfEnrolled enforces exactly this.
+    const mfaError = requireMFAIfEnrolled(event, user.mfa_enabled);
+    if (mfaError) return mfaError;
+
+    // 7. Generate MFA Secret
+    const secret = authenticator.generateSecret();
+
+    // 8. User-specific otpauth URI (RFC 6238 issuer:account)
+    const issuer = 'SecureProduct';
+    const label = encodeURIComponent(user.email);
+    const encodedIssuer = encodeURIComponent(issuer);
+
+    const otpAuthUrl = `otpauth://totp/${encodedIssuer}:${label}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
+
+    const ipAddress = context.identity?.sourceIp || 'unknown';
+    const auditTimestamp = new Date().toISOString();
+
+    // ROTATION event when re-initialising an ACTIVE secret — a deliberate
+    // reconfigure or session-compromise indicator must leave a trace.
+    const eventType = isRotation ? 'MFA_SECRET_ROTATED' : 'MFA_INITIATED';
+    const safeDetails = {
+      event_type: eventType,
+      timestamp: auditTimestamp,
+      method: 'totp',
+    };
+
+    await client.query(
+      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address)
+       VALUES ($1, $2, $3, NOW(), $4)`,
+      [userId, eventType, JSON.stringify(safeDetails), ipAddress]
+    );
+
+    // 9. Store Secret in Database
+    await client.query(
+      `UPDATE public.users SET mfa_secret = $1, mfa_enabled = false WHERE id = $2`,
+      [secret, userId]
+    );
+
+    // 10. Return Response
+    // CRITICAL: DO NOT return 'secret' in the JSON body — the otpAuthUrl is
+    // for local QR rendering (frontend uses qrcode.toCanvas) and manual entry.
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private'
       },
-      body: JSON.stringify({ 
-        success: true, 
-        // secret removed!
-        qrUrl,
-        otpAuthUrl, // Frontend uses this to generate the QR image, but should not expose the raw string
-        message: 'Scan the QR code with your authenticator app.'
+      body: JSON.stringify({
+        success: true,
+        otpAuthUrl,
+        message: isRotation
+          ? 'New QR code generated. Your previous authenticator entry is now invalid — re-scan and verify.'
+          : 'Scan the QR code with your authenticator app.',
       }),
     };
 
   } catch (error) {
     console.error('[MFA Init] Error:', error);
     return { statusCode: 500, body: JSON.stringify({ error: 'Failed to generate MFA secret' }) };
+  } finally {
+    client.release();
   }
 };

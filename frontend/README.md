@@ -1,12 +1,7 @@
-## Secure Web Product (Frontend)
+# Secure Web Product — Frontend
 
-> "
-> **A Privacy-First, Zero-Knowledge Authentication & Audit Hub**.  
-> A production-ready Vite + React frontend demonstrating end-to-end client-side encryption, secure MFA flows, and privacy-preserving UX patterns backed by Netlify Serverless Functions.
-> "
-> This application implements a **zero-knowledge architecture** where sensitive data is encrypted in the browser before transmission. It features a complete authentication system with **TOTP-based MFA**, **backup codes**, and **immutable audit logging**.
-
-> **Note**: This is the client component of the Secure Web Product ecosystem. It relies on the `netlify/functions` backend for authentication and storage.
+> Privacy-first Vite + React client with zero-knowledge client-side encryption,
+> TOTP MFA, and privacy-preserving UX. Pairs with the `netlify/functions` backend.
 
 ---
 
@@ -25,25 +20,16 @@
 ---
 
 ### Quick Start
-#### Prerequisites
-- **Node.js** ≥ 20.x
-- **PostgreSQL** (local or cloud)
-- **Redis** (optional for local dev; Upstash used in production)
-- **Netlify CLI** (for local function testing)
+
+**Prerequisites:** Node.js ≥ 20, PostgreSQL, Redis (optional locally), Netlify CLI.
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/sumanjangili/secure-web-product.git
-cd secure-web-product
+cd secure-web-product/frontend && npm ci
 
-# 2. Install dependencies
-cd frontend
-npm ci
-
-# 3. Install Backend Dependencies (Functions)
-cd ../netlify/functions
-npm ci
-cd ../..
+# Backend (separate terminal, repo root):
+cd ../netlify/functions && npm ci && cd ../..
+netlify functions:serve   # http://localhost:9999
 ```
 
 #### Local Development
@@ -81,9 +67,10 @@ netlify functions:serve
      - **Only** the encrypted blob is sent to the server. The password never leaves the client.
 - **Memory Safety**: Sensitive data (passwords, form inputs) is explicitly cleared from React state immediately after processing.
 
-3. Immutable Audit Logging Integration
-- All authentication events (Login, MFA, Logout, Erasure) are logged to an immutable database.
-- Backend validates requests via x-audit-secret header.
+3. Audit Logging
+- All sensitive events (login, MFA setup/rotation/verification, backup-code generation, consent changes, erasure) are logged with constraint-validated JSONB details.
+- A database `CHECK` constraint whitelists valid event types, and logs survive user erasure via `ON DELETE SET NULL` — the GDPR erasure trail outlives the account.
+- Mutating endpoints are protected by CSRF validation, not header secrets.
 - No plaintext user data is ever stored or logged.
 
 4. Privacy-First UX Components
@@ -113,9 +100,9 @@ AUDIT_SECRET=your_audit_secret_for_backend_validation
 # UPSTASH_REDIS_REST_TOKEN=your_upstash_token
 
 # --- Frontend (Optional, usually auto-detected) ---
-VITE_API_URL=http://localhost:9999/.netlify/functions
+VITE_API-BASE_URL=/api
 VITE_AUDIT_LOG_ENDPOINT=http://localhost:9999/.netlify/functions/audit_log
-VITE_DEBUG_MODE=false # Set to "true" to enable verbose crypto error logging
+VITE_SECURE_FETCH_DEBUG=false # Set to "true" to enable verbose crypto error logging
 ```
 #### Production (Netlify)
 Set these variables in Netlify Dashboard > Site Settings > Environment Variables:
@@ -174,25 +161,25 @@ The src/lib/crypto.ts module handles all security operations:
 ---
 
 ### Project Structure
-```js
-frontend/
-├── src/
-│  ├── components/
-│  │   ├── LoginForm.tsx          # Login & MFA entry
-│  │   ├── MFASetup.tsx           # QR Code & Backup Code generation
-│   │   ├── SecureForm.tsx         # Encrypted contact form
-│  │   ├── ConsentBanner.tsx      # Consent management UI
-│   │   └── UserSettings.tsx       # Profile & MFA management
-│   ├── lib/
-│   │   ├── crypto.ts              # AES-GCM + PBKDF2 implementation
-│   │   ├── mfa.ts                 # TOTP logic (client-side)
-│   │   └── session-utils.ts       # Token storage & validation
-│  ├─hooks/
-│  │  └── useAnalytics.ts        # Privacy-safe analytics
-│  └── main.tsx
-├- netlify/
-│  └── functions/                 # (Shared) Backend functions
-└─package.json
+
+```txt
+frontend/src/
+├── components/
+│   ├── LoginForm.tsx          # Login + MFA + backup-code steps, lockout UI
+│   ├── MFASetup.tsx           # QR display & backup-code generation (local QR)
+│   ├── SecureForm.tsx         # Encrypted contact form
+│   ├── ConsentBanner.tsx      # Consent UI with rollback & fail-open checks
+│   ├── UserSettings.tsx       # MFA & backup-code management
+│   └── DeleteAccountForm.tsx  # Password-reconfirmed erasure w/ typed confirm
+├── lib/
+│   ├── crypto.ts              # AES-GCM + PBKDF2 (Web Crypto)
+│   ├── mfa.ts                 # Base32/URI formatting helpers
+│   ├── fetch-helper.ts        # secureFetchJson, ApiError, CSRF handling
+│   ├── consent-manager.ts     # Consent state & change notifications
+│   └── session-utils.ts       # Session/token utilities
+├── hooks/
+│   └── useAnalytics.ts        # Consent-aware analytics
+└── main.tsx
 ```
 
 ---

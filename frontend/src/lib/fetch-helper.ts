@@ -227,7 +227,7 @@ export async function secureFetchJson<T = any>(
     ...restOptions
   } = options;
 
-  // ✅ Clean URL construction (legacy shim removed in Phase 2)
+  // Clean URL construction (legacy shim removed in Phase 2)
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}/${url.replace(/^\/+/, '')}`;
   const method = (restOptions.method || 'GET').toUpperCase();
 
@@ -484,6 +484,8 @@ export function resetSessionAndReload(): void {
 export async function logout(logoutEndpoint: string = '/logout'): Promise<void> {
   try {
     await secureFetchJson(logoutEndpoint, { method: 'POST' });
+    // Wait for Set-Cookie to process
+    await new Promise(r => setTimeout(r, 500));
   } catch (err) {
     warn('Server logout failed, falling back to client reset:', err);
   } finally {

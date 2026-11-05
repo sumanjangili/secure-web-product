@@ -28,7 +28,7 @@ export const useAnalytics = () => {
       const allowed = await ConsentManager.isAllowed("analytics");
       setIsTracking(allowed);
       
-      if (import.meta.env.VITE_DEBUG_MODE === "true") {
+      if (import.meta.env.VITE_SECURE_FETCH_DEBUG === "true") {
         console.log(`[Analytics] Consent: ${allowed ? 'granted' : 'denied'}`);
       }
     } catch (error) {
@@ -80,7 +80,7 @@ export const useAnalytics = () => {
     }
 
     // Debug logging with safety
-    if (import.meta.env.VITE_DEBUG_MODE === "true") {
+    if (import.meta.env.VITE_SECURE_FETCH_DEBUG === "true") {
       const safeProps = Object.fromEntries(
         Object.entries(sanitizedProps).filter(([k]) => !k.includes('token') && !k.includes('secret'))
       );

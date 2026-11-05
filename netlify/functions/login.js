@@ -8,6 +8,8 @@ const redis = require('./lib/redis');
 // --- Configuration ---
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCKOUT_TIME_SECONDS = 15 * 60; // 15 minutes
+const MAX_IP_ATTEMPTS = 20;           // Pre-auth IP limit: catches credential stuffing
+const IP_WINDOW_SECONDS = 15 * 60;
 const SESSION_DURATION = 86400; // 24 hours
 
 // --- Environment Validation ---
@@ -27,18 +29,19 @@ const ALLOWED_ORIGINS = [
 
 function getAllowedOrigin(requestedOrigin) {
   if (!requestedOrigin) return null;
-  
+
   const normalized = requestedOrigin.toLowerCase();
   for (const origin of ALLOWED_ORIGINS) {
     if (normalized === origin.toLowerCase()) {
       return origin;
     }
   }
-  
+
+  // Localhost variants permitted only outside Netlify
   if (normalized.includes('localhost') && !process.env.NETLIFY) {
     return requestedOrigin;
   }
-  
+
   return null;
 }
 
@@ -48,9 +51,9 @@ if (dbUrl) {
   try {
     const isProdEnv = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
     console.log(`[Login] Initializing DB. IsProd: ${isProdEnv}`);
-    pool = new Pool({ 
+    pool = new Pool({
       connectionString: dbUrl,
-      ssl: isProdEnv ? { rejectUnauthorized: false } : false  
+      ssl: isProdEnv ? { rejectUnauthorized: false } : false
     });
     console.log('[Login] Database pool initialized.');
   } catch (err) {
@@ -72,7 +75,7 @@ async function logAuditEvent(client, userId, eventType, details, ipAddress) {
     };
 
     await client.query(
-      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address) 
+      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address)
        VALUES ($1, $2, $3, NOW(), $4)`,
       [userId, eventType, JSON.stringify(compliantDetails), ipAddress || 'unknown']
     );
@@ -95,8 +98,29 @@ function jsonResponse(statusCode, data, extraHeaders = {}) {
   };
 }
 
+/**
+ * ✅ FIXED: Single source of truth for cookie construction.
+ * Every cookie built through this helper carries IDENTICAL attributes,
+ * which guarantees logout.js deletion cookies match exactly.
+ *
+ * CRITICAL: Domain=.indoscient.in MUST stay in sync with logout.js —
+ * a cookie set with this Domain can only be deleted with the same Domain.
+ */
+function buildCookie(name, value, maxAge, isProd) {
+  const attrs = [
+    `${name}=${value}`,
+    'HttpOnly',
+    `SameSite=${isProd ? 'None' : 'Lax'}`,
+    'Path=/',
+    `Max-Age=${maxAge}`,
+  ];
+  if (isProd) attrs.push('Secure');
+  if (isProd) attrs.push('Domain=.indoscient.in');
+  return attrs.join('; ');
+}
+
 exports.handler = async (event, context) => {
-  const timeoutPromise = new Promise((_, reject) => 
+  const timeoutPromise = new Promise((_, reject) =>
     setTimeout(() => reject(new Error('Function timeout')), 10000)
   );
 
@@ -115,7 +139,7 @@ async function executeHandler(event, context) {
   // 1. Handle CORS Preflight
   if (event.httpMethod === 'OPTIONS') {
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
-    
+
     return jsonResponse(204, {}, {
       'Access-Control-Allow-Origin': allowedOrigin || '*',
       'Access-Control-Allow-Credentials': 'true',
@@ -145,6 +169,33 @@ async function executeHandler(event, context) {
     return jsonResponse(400, { error: 'Email and password required' });
   }
 
+  // Sanity-bound inputs before they touch the DB or the limiter keys
+  if (typeof email !== 'string' || typeof password !== 'string' ||
+      email.length > 320 || password.length > 1024) {
+    return jsonResponse(400, { error: 'Invalid credentials format' });
+  }
+
+  const ipAddress = context?.identity?.sourceIp || 'unknown';
+
+  // 3.5 ✅ NEW: Pre-auth IP-based rate limit.
+  // The per-user limiter below is keyed on user.id — which means requests
+  // for NON-EXISTENT emails never touch it. Without this layer, an attacker
+  // can probe unlimited unknown emails (only slowed by the 500ms delay).
+  const ipRateKey = `login_ip_rate_limit:${ipAddress}`;
+  try {
+    const ipLimit = await redis.checkRateLimit(ipRateKey, MAX_IP_ATTEMPTS, IP_WINDOW_SECONDS);
+    if (!ipLimit.allowed) {
+      return jsonResponse(429, {
+        error: 'Too many login attempts',
+        retryAfter: ipLimit.ttl
+      }, {
+        'Retry-After': String(ipLimit.ttl)
+      });
+    }
+  } catch (redisErr) {
+    console.warn('[Login] IP rate limit check failed (non-fatal):', redisErr.message);
+  }
+
   // 4. Database Check
   if (!pool) {
     console.error('[Login] DB Pool null');
@@ -155,7 +206,7 @@ async function executeHandler(event, context) {
   try {
     // 5. Find User
     const userResult = await client.query(
-      'SELECT * FROM public.users WHERE email = $1', 
+      'SELECT * FROM public.users WHERE email = $1',
       [email.toLowerCase()]
     );
 
@@ -166,15 +217,14 @@ async function executeHandler(event, context) {
 
     const user = userResult.rows[0];
 
-    // 6. Rate Limiting - ATOMIC check using Lua script
+    // 6. Rate Limiting - ATOMIC check using Lua script (per-user)
     const rateKey = `login_rate_limit:${user.id}`;
-    const ipAddress = context?.identity?.sourceIp || 'unknown';
-    
+
     let rateLimitResult;
     try {
       rateLimitResult = await redis.checkRateLimit(
-        rateKey, 
-        MAX_LOGIN_ATTEMPTS, 
+        rateKey,
+        MAX_LOGIN_ATTEMPTS,
         LOCKOUT_TIME_SECONDS
       );
     } catch (redisErr) {
@@ -184,18 +234,17 @@ async function executeHandler(event, context) {
     }
 
     if (!rateLimitResult.allowed) {
-      // Log rate limit event
       try {
-        await logAuditEvent(client, user.id, 'LOGIN_RATE_LIMITED', { 
-          attempts: rateLimitResult.count 
+        await logAuditEvent(client, user.id, 'LOGIN_RATE_LIMITED', {
+          attempts: rateLimitResult.count
         }, ipAddress);
       } catch (auditErr) {
         console.warn('Audit log failed (ignored):', auditErr.message);
       }
 
-      return jsonResponse(429, { 
-        error: 'Too many login attempts', 
-        retryAfter: rateLimitResult.ttl 
+      return jsonResponse(429, {
+        error: 'Too many login attempts',
+        retryAfter: rateLimitResult.ttl
       }, {
         'Retry-After': String(rateLimitResult.ttl)
       });
@@ -203,26 +252,27 @@ async function executeHandler(event, context) {
 
     // 7. Verify Password
     const isValid = await argon2.verify(user.password_hash, password);
-    
+
     if (!isValid) {
       // Increment was already done by checkRateLimit - no need to increment again
-      
+
       try {
-        await logAuditEvent(client, user.id, 'LOGIN_FAILED', { 
-          email: email 
+        await logAuditEvent(client, user.id, 'LOGIN_FAILED', {
+          email: email
         }, ipAddress);
       } catch (auditErr) {
         console.warn('Audit log failed on login failure (ignored):', auditErr.message);
       }
-      
+
       return jsonResponse(401, { error: 'Invalid credentials' });
     }
 
-    // 8. Success: Reset Rate Limit
-    try { 
-      await redis.resetRateLimit(rateKey); 
-    } catch (e) { 
-      console.warn('Redis del failed (non-fatal)'); 
+    // 8. Success: Reset Rate Limits (both per-user and IP counter)
+    try {
+      await redis.resetRateLimit(rateKey);
+      await redis.resetRateLimit(ipRateKey);
+    } catch (e) {
+      console.warn('Redis reset failed (non-fatal)');
     }
 
     // 9. Generate JWT
@@ -231,8 +281,8 @@ async function executeHandler(event, context) {
     }
 
     const token = jwt.sign(
-      { userId: user.id, email: user.email }, 
-      jwtSecret, 
+      { userId: user.id, email: user.email },
+      jwtSecret,
       { expiresIn: SESSION_DURATION }
     );
 
@@ -241,7 +291,7 @@ async function executeHandler(event, context) {
 
     // 11. Audit Log
     try {
-      await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', { 
+      await logAuditEvent(client, user.id, 'LOGIN_SUCCESS', {
         email: user.email,
         mfa_enabled: user.mfa_enabled || false
       }, ipAddress);
@@ -252,23 +302,32 @@ async function executeHandler(event, context) {
     // 12. Update Last Login
     try {
       await client.query(
-        'UPDATE public.users SET last_login = NOW() WHERE id = $1', 
+        'UPDATE public.users SET last_login = NOW() WHERE id = $1',
         [user.id]
       );
     } catch (updateErr) {
       console.error('[Login] Update Last Login FAILED (Ignored):', updateErr.message);
     }
 
-    // 13. Prepare Cookies
+    // 13. Prepare Cookies — ✅ FIXED: via buildCookie helper,
+    // guaranteeing attribute parity with logout.js deletion cookies.
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
-    const samesiteFlag = isProd ? 'None' : 'Lax';
-    const domainFlag = isProd ? '; Domain=.indoscient.in' : '';
-    
-    const authCookie = `auth_token=${token}; HttpOnly; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}${domainFlag}`;
-    const csrfCookie = `csrf_token=${csrfToken}; SameSite=${samesiteFlag}; Path=/; Max-Age=${SESSION_DURATION}${isProd ? '; Secure' : ''}${domainFlag}`;
+
+    const authCookie = buildCookie('auth_token', token, SESSION_DURATION, isProd);
+    // ✅ Note: csrf_token must NOT be HttpOnly — the frontend reads it via
+    // document.cookie to send the X-CSRF-Token header (Double-Submit pattern).
+    const csrfAttrs = [
+      `csrf_token=${csrfToken}`,
+      `SameSite=${isProd ? 'None' : 'Lax'}`,
+      'Path=/',
+      `Max-Age=${SESSION_DURATION}`,
+    ];
+    if (isProd) csrfAttrs.push('Secure');
+    if (isProd) csrfAttrs.push('Domain=.indoscient.in');
+    const csrfCookie = csrfAttrs.join('; ');
 
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
-    
+
     return jsonResponse(200, {
       success: true,
       userId: user.id,

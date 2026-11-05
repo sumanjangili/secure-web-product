@@ -18,26 +18,26 @@ const ALLOWED_ORIGINS = [
 
 function getAllowedOrigin(requestedOrigin) {
   if (!requestedOrigin) return null;
-  
+
   const normalized = requestedOrigin.toLowerCase();
   for (const origin of ALLOWED_ORIGINS) {
     if (normalized === origin.toLowerCase()) {
       return origin;
     }
   }
-  
+
   if (normalized.includes('localhost') && !process.env.NETLIFY) {
     return requestedOrigin;
   }
-  
+
   return null;
 }
 
 // --- Database Initialization ---
-const pool = new Pool({ 
+const pool = new Pool({
   connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production' 
-    ? { rejectUnauthorized: false } 
+  ssl: process.env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
     : false
 });
 
@@ -50,7 +50,7 @@ if (!dbUrl) {
  */
 function jsonResponse(statusCode, data, extraHeaders = {}) {
   return {
-    statusCode: statusCode,
+    statusCode,
     headers: {
       'Content-Type': 'application/json',
       ...extraHeaders
@@ -63,7 +63,7 @@ exports.handler = async (event, context) => {
   // 1. Handle CORS Preflight
   if (event.httpMethod === 'OPTIONS') {
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
-    
+
     return jsonResponse(204, {}, {
       'Access-Control-Allow-Origin': allowedOrigin || '*',
       'Access-Control-Allow-Credentials': 'true',
@@ -80,6 +80,9 @@ exports.handler = async (event, context) => {
   }
 
   // 3. Extract and Verify Auth Token FIRST
+  // NOTE: This endpoint deliberately accepts PRE-MFA tokens — the frontend
+  // needs mfaEnabled right after password login to route into the MFA step.
+  // Do NOT gate this on mfaVerified; gate the sensitive endpoints instead.
   let userId = null;
   try {
     const cookies = event.headers.cookie;
@@ -89,7 +92,7 @@ exports.handler = async (event, context) => {
 
     const cookiePairs = cookies.split(';');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
-    
+
     if (!authTokenPair) {
       return jsonResponse(401, { error: 'Authentication required. Session cookie missing.' });
     }
@@ -102,16 +105,16 @@ exports.handler = async (event, context) => {
     return jsonResponse(401, { error: 'Session expired or invalid' });
   }
 
-  // ✅ GET requests do NOT require CSRF validation (read-only operation)
+  // GET requests do NOT require CSRF validation (read-only operation)
 
   // 4. Rate Limiting - ATOMIC check using Lua script
   const rateKey = `profile_get:${userId}`;
-  
+
   let rateLimitResult;
   try {
     rateLimitResult = await redis.checkRateLimit(
-      rateKey, 
-      MAX_REQUESTS_PER_MINUTE, 
+      rateKey,
+      MAX_REQUESTS_PER_MINUTE,
       RATE_LIMIT_WINDOW
     );
   } catch (redisErr) {
@@ -120,15 +123,15 @@ exports.handler = async (event, context) => {
   }
 
   if (!rateLimitResult.allowed) {
-    return jsonResponse(429, { 
-      error: 'Too many requests. Please slow down.', 
-      retryAfter: rateLimitResult.ttl 
+    return jsonResponse(429, {
+      error: 'Too many requests. Please slow down.',
+      retryAfter: rateLimitResult.ttl
     }, {
       'Retry-After': String(rateLimitResult.ttl)
     });
   }
 
-  // 5. Fetch User Data (with public. schema prefix)
+  // 5. Fetch User Data
   const client = await pool.connect();
   try {
     const result = await client.query(
@@ -141,11 +144,8 @@ exports.handler = async (event, context) => {
     }
 
     const user = result.rows[0];
-    
-    // ✅ Rate limit already incremented by checkRateLimit - no manual increment needed
-
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
-    
+
     return jsonResponse(200, {
       id: user.id,
       email: user.email,
@@ -155,7 +155,9 @@ exports.handler = async (event, context) => {
       'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
       'Access-Control-Allow-Credentials': 'true',
       'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      'Pragma': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY', // ✅ added — every other 200 response has it
       'Vary': 'Origin'
     });
   } catch (error) {

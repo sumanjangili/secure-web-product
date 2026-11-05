@@ -1,185 +1,303 @@
 // netlify/functions/delete-user.js
 const { Pool } = require('pg');
+const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
-const { validateCsrf } = require('./_middleware/csrf-check'); // ✅ Import CSRF validator
+const redis = require('./lib/redis');
+const { validateCsrf } = require('./_middleware/csrf-check');
 
 // --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
+const MAX_DELETIONS_PER_HOUR = 3;
+const RATE_LIMIT_WINDOW = 60 * 60; // 1 hour
 
-// Initialize Pool with SSL for Neon/Cloud Postgres
-const pool = new Pool({ 
+// --- Allowed Origins Configuration ---
+const ALLOWED_ORIGINS = [
+  'https://app.indoscient.in',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+];
+
+function getAllowedOrigin(requestedOrigin) {
+  if (!requestedOrigin) return null;
+
+  const normalized = requestedOrigin.toLowerCase();
+  for (const origin of ALLOWED_ORIGINS) {
+    if (normalized === origin.toLowerCase()) return origin;
+  }
+
+  if (normalized.includes('localhost') && !process.env.NETLIFY) {
+    return requestedOrigin;
+  }
+
+  return null;
+}
+
+// --- Database Initialization ---
+const pool = new Pool({
   connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production' 
+  ssl: process.env.NODE_ENV === 'production'
     ? { rejectUnauthorized: false }
-    : false  // Disable SSL for local dev
+    : false
 });
 
-// Helper to sanitize input for audit logs (prevent XSS in logs)
+/**
+ * Builds Set-Cookie strings that DELETE cookies with attributes matching
+ * login.js exactly. CRITICAL: must stay in sync with login.js buildCookie()
+ * and logout.js buildDeletionCookies() — one cookie contract, three files.
+ */
+function buildDeletionCookies() {
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
+
+  const build = (name, httpOnly) => {
+    const attrs = [`${name}=;`];
+    if (httpOnly) attrs.push('HttpOnly');
+    attrs.push(`SameSite=${isProd ? 'None' : 'Lax'}`);
+    attrs.push('Path=/');
+    attrs.push('Max-Age=0');
+    attrs.push(`Expires=${new Date(0).toUTCString()}`);
+    if (isProd) attrs.push('Secure');
+    if (isProd) attrs.push('Domain=.indoscient.in');
+    return attrs.join(' ');
+  };
+
+  return [build('auth_token', true), build('csrf_token', false)];
+}
+
 const sanitizeLogInput = (str) => {
   if (typeof str !== 'string') return '';
-  // Remove HTML tags and control characters
   return str.replace(/[<>]/g, '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
 };
 
+function jsonResponse(statusCode, data, extraHeaders = {}) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      ...extraHeaders
+    },
+    body: JSON.stringify(data)
+  };
+}
+
 exports.handler = async (event, context) => {
-  // 1. Method Check
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
+  // 1. CORS Preflight
+  if (event.httpMethod === 'OPTIONS') {
+    const allowedOrigin = getAllowedOrigin(event.headers.origin);
+
+    return jsonResponse(204, {}, {
+      'Access-Control-Allow-Origin': allowedOrigin || '*',
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
+      'Access-Control-Max-Age': '86400',
+      'Vary': 'Origin'
+    });
   }
 
-  // 2. CSRF Check (CRITICAL)
-  // Prevents Cross-Site Request Forgery attacks on this destructive endpoint
+  // 2. Method Check
+  if (event.httpMethod !== 'POST') {
+    return jsonResponse(405, { error: 'Method Not Allowed' });
+  }
+
+  // 3. CSRF Check (CRITICAL)
   const csrfError = validateCsrf(event);
   if (csrfError) return csrfError;
 
-  // 3. Authenticate via Cookie (HttpOnly)
+  // 4. Authenticate via Cookie (HttpOnly)
   let userId;
   try {
     const cookies = event.headers.cookie;
     if (!cookies) {
-      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. No session cookie found.' }) };
+      return jsonResponse(401, { error: 'Authentication required. No session cookie found.' });
     }
 
     const cookiePairs = cookies.split(';');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
-    
+
     if (!authTokenPair) {
-      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. Session cookie missing.' }) };
+      return jsonResponse(401, { error: 'Authentication required. Session cookie missing.' });
     }
 
     const token = authTokenPair.split('=')[1];
-    
-    // Verify JWT
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     userId = decoded.userId;
   } catch (jwtErr) {
     console.error('[DeleteUser] JWT Verification Failed:', jwtErr.message);
     if (jwtErr.name === 'TokenExpiredError') {
-      return { statusCode: 401, body: JSON.stringify({ error: 'Session expired. Please log in again.' }) };
+      return jsonResponse(401, { error: 'Session expired. Please log in again.' });
     }
-    return { statusCode: 401, body: JSON.stringify({ error: 'Invalid or expired session' }) };
+    return jsonResponse(401, { error: 'Invalid or expired session' });
   }
 
-  // 4. Parse Body
+  // 5. Parse Body
   let payload;
   try {
     payload = JSON.parse(event.body || '{}');
   } catch (e) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON body' }) };
+    return jsonResponse(400, { error: 'Invalid JSON body' });
   }
+
+  const { password } = payload;
+  if (!password || typeof password !== 'string' || password.length < 1 || password.length > 1024) {
+    return jsonResponse(400, { error: 'Password confirmation required.' });
+  }
+
+  // 6. Rate Limiting (BEFORE expensive password hash check)
+  const rateKey = `user_delete:${userId}`;
+  const ipAddress = context.identity?.sourceIp || 'unknown';
+
+  let rateLimitResult;
+  try {
+    rateLimitResult = await redis.checkRateLimit(rateKey, MAX_DELETIONS_PER_HOUR, RATE_LIMIT_WINDOW);
+  } catch (redisErr) {
+    console.warn('[DeleteUser] Redis rate limit check failed (non-fatal):', redisErr.message);
+    rateLimitResult = { allowed: true, count: 0, ttl: RATE_LIMIT_WINDOW };
+  }
+
+  if (!rateLimitResult.allowed) {
+    return jsonResponse(429, {
+      error: 'Too many deletion attempts. Please contact support.',
+      retryAfter: rateLimitResult.ttl
+    }, {
+      'Retry-After': String(rateLimitResult.ttl)
+    });
+  }
+
+  const deletionCookies = buildDeletionCookies();
+  const allowedOrigin = getAllowedOrigin(event.headers.origin);
 
   const client = await pool.connect();
   try {
-    // Start Transaction
+    // 7. ✅ PASSWORD RE-AUTHENTICATION (before ANY mutation)
+    // This raises the bar from "valid cookie" to "knowing the password" for
+    // destructive actions. Standard practice (GitHub, Google, Apple all require this
+    // for account deletion) — prevents a hijacked session (stolen cookie, malware,
+    // shared computer) from irreversibly destroying someone's account with zero friction.
+    const userResult = await client.query(
+      'SELECT password_hash FROM public.users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      // User vanished between cookie verify and now. Return success to avoid
+      // revealing whether the account existed.
+      return jsonResponse(200, {
+        success: true,
+        message: 'Account and associated data have been permanently erased (or did not exist).'
+      }, {
+        'Set-Cookie': deletionCookies,
+        'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
+        'Access-Control-Allow-Credentials': 'true',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+        'Vary': 'Origin'
+      });
+    }
+
+    const user = userResult.rows[0];
+    const isValidPassword = await argon2.verify(user.password_hash, password);
+
+    if (!isValidPassword) {
+      // Timing-safe: we still sleep to prevent timing attacks on password validity
+      await new Promise(r => setTimeout(r, 500));
+
+      return jsonResponse(401, { error: 'Incorrect password. Account deletion requires password confirmation.' });
+    }
+
+    // 8. Begin Transaction
     await client.query('BEGIN');
 
-    // 5. Log the Deletion Request (Before deletion)
+    // 9. ERASURE_REQUESTED — canonical name, details.key matches column param
     const reason = sanitizeLogInput(payload.reason || 'GDPR Right to Erasure');
-    const timestamp = payload.timestamp ? new Date(payload.timestamp).toISOString() : new Date().toISOString();
-    const ipAddress = context.identity?.sourceIp || 'unknown';
+    const timestamp = payload.timestamp
+      ? new Date(payload.timestamp).toISOString()
+      : new Date().toISOString();
 
-    // ✅ FIX: Ensure details object contains required keys
     const safeDetailsRequest = {
-      event_type: 'USER_ERASURE_REQUESTED',
+      event_type: 'ERASURE_REQUESTED',
       timestamp: timestamp,
       reason: reason
     };
 
     await client.query(
-      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
+      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address) 
        VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, 'USER_ERASURE_REQUESTED', JSON.stringify(safeDetailsRequest), ipAddress]
+      [userId, 'ERASURE_REQUESTED', JSON.stringify(safeDetailsRequest), ipAddress]
     );
 
-    // 6. Log Completion (BEFORE deleting the user to ensure FK validity)
-    // This ensures the audit log entry is valid even if the user row is deleted immediately after.
+    // 10. ERASURE_COMPLETED — `reason` included (required by chk_erasure_log_structure)
     const completedTimestamp = new Date().toISOString();
-    
-    // ✅ FIX: Ensure details object contains required keys
     const safeDetailsComplete = {
-      event_type: 'USER_ERASURE_COMPLETED',
+      event_type: 'ERASURE_COMPLETED',
       timestamp: completedTimestamp,
-      deletedAt: completedTimestamp
+      deletedAt: completedTimestamp,
+      reason: reason
     };
 
     await client.query(
-      `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
+      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address) 
        VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, 'USER_ERASURE_COMPLETED', JSON.stringify(safeDetailsComplete), ipAddress]
+      [userId, 'ERASURE_COMPLETED', JSON.stringify(safeDetailsComplete), ipAddress]
     );
 
-    // 7. Hard Delete User Data
-    // NOTE: Ensure your DB schema has ON DELETE CASCADE for foreign keys (secure_data, etc.)
-    // If not, you must manually delete child records here before deleting the user.
-    const deleteResult = await client.query('DELETE FROM users WHERE id = $1', [userId]);
+    // (Explicit SET user_id = NULL removed — the FK's ON DELETE SET NULL handles it.)
+
+    // 11. Hard Delete User (children cascade: secure_data, consent_records, etc.)
+    const deleteResult = await client.query('DELETE FROM public.users WHERE id = $1', [userId]);
 
     if (deleteResult.rowCount === 0) {
-      // User not found. This could mean they were already deleted.
-      // To prevent information leakage, we treat this as a success or a specific error.
-      // Here we return success to avoid revealing if the user existed.
-      await client.query('ROLLBACK'); // No changes made, but we need to clean up
-      return {
-        statusCode: 200,
-        headers: {
-          'Set-Cookie': 'auth_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0',
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, private'
-        },
-        body: JSON.stringify({ 
-          success: true, 
-          message: 'Account and associated data have been permanently erased (or did not exist).' 
-        }),
-      };
+      await client.query('ROLLBACK');
+      return jsonResponse(200, {
+        success: true,
+        message: 'Account and associated data have been permanently erased (or did not exist).'
+      }, {
+        'Set-Cookie': deletionCookies,
+        'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
+        'Access-Control-Allow-Credentials': 'true',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+        'Vary': 'Origin'
+      });
     }
 
-    // Commit Transaction
     await client.query('COMMIT');
 
-    // Clear the session cookie in the response
-    return {
-      statusCode: 200,
-      headers: {
-        'Set-Cookie': 'auth_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0',
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, private'
-      },
-      body: JSON.stringify({ 
-        success: true, 
-        message: 'Account and associated data have been permanently erased.' 
-      }),
-    };
+    return jsonResponse(200, {
+      success: true,
+      message: 'Account and associated data have been permanently erased.'
+    }, {
+      'Set-Cookie': deletionCookies,
+      'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
+      'Access-Control-Allow-Credentials': 'true',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      'X-Content-Type-Options': 'nosniff',
+      'Vary': 'Origin'
+    });
 
   } catch (error) {
-    // Rollback on any error
     await client.query('ROLLBACK');
     console.error('[DeleteUser] Critical Error:', error);
-    
-    // Attempt to log failure (Best effort, might fail if DB is in bad state)
+
+    // Best-effort failure audit (pool-level, independent of the rolled-back tx)
     try {
       const failedTimestamp = new Date().toISOString();
       const errorMessage = sanitizeLogInput(error.message);
-      const ipAddress = context.identity?.sourceIp || 'unknown';
 
-      // ✅ FIX: Ensure details object contains required keys
       const safeDetailsFail = {
-        event_type: 'USER_ERASURE_FAILED',
+        event_type: 'ERASURE_FAILED',
         timestamp: failedTimestamp,
         error: errorMessage
       };
 
-      await client.query(
-        `INSERT INTO audit_logs (user_id, event_type, details, timestamp, ip_address) 
+      await pool.query(
+        `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address) 
          VALUES ($1, $2, $3, NOW(), $4)`,
-        [userId, 'USER_ERASURE_FAILED', JSON.stringify(safeDetailsFail), ipAddress]
+        [userId, 'ERASURE_FAILED', JSON.stringify(safeDetailsFail), ipAddress]
       );
     } catch (logErr) {
       console.error('[DeleteUser] Failed to log error:', logErr);
     }
 
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error during erasure process' }),
-    };
+    return jsonResponse(500, { error: 'Internal server error during erasure process' });
   } finally {
     client.release();
   }

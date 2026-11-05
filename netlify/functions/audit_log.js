@@ -2,12 +2,18 @@
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
+const { requireMFA } = require('./_middleware/require-mfa');
 
 // --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const jwtSecret = process.env.JWT_SECRET;
 const MAX_REQUESTS_PER_MINUTE = 30;
 const RATE_LIMIT_WINDOW = 60; // 1 minute in seconds
+
+// ✅ FIX: UUID format for the admin user-id filter. Previously
+// parseInt(uuid) → NaN → EVERY valid filter was rejected with 400,
+// so admins could never actually filter by user.
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // --- Allowed Origins Configuration ---
 const ALLOWED_ORIGINS = [
@@ -19,25 +25,25 @@ const ALLOWED_ORIGINS = [
 
 function getAllowedOrigin(requestedOrigin) {
   if (!requestedOrigin) return null;
-  
+
   const normalized = requestedOrigin.toLowerCase();
   for (const origin of ALLOWED_ORIGINS) {
     if (normalized === origin.toLowerCase()) {
       return origin;
     }
   }
-  
+
   if (normalized.includes('localhost') && !process.env.NETLIFY) {
     return requestedOrigin;
   }
-  
+
   return null;
 }
 
 // --- Database Initialization ---
-const pool = new Pool({ 
+const pool = new Pool({
   connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production' 
+  ssl: process.env.NODE_ENV === 'production'
     ? { rejectUnauthorized: false }
     : false
 });
@@ -46,19 +52,16 @@ const pool = new Pool({
 const ADMIN_USER_IDS = (() => {
   const raw = process.env.ADMIN_USER_IDS;
   if (!raw || !raw.trim()) return [];
-  
+
   return raw
     .split(',')
     .map(id => id.trim().toLowerCase())
-    .filter(id => id.length > 0); // Reject empty entries
+    .filter(id => id.length > 0);
 })();
 
-/**
- * Helper to create consistent error responses
- */
 function jsonResponse(statusCode, data, extraHeaders = {}) {
   return {
-    statusCode: statusCode,
+    statusCode,
     headers: {
       'Content-Type': 'application/json',
       ...extraHeaders
@@ -71,7 +74,7 @@ exports.handler = async (event, context) => {
   // 1. Handle CORS Preflight
   if (event.httpMethod === 'OPTIONS') {
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
-    
+
     return jsonResponse(204, {}, {
       'Access-Control-Allow-Origin': allowedOrigin || '*',
       'Access-Control-Allow-Credentials': 'true',
@@ -98,7 +101,7 @@ exports.handler = async (event, context) => {
 
     const cookiePairs = cookies.split(';');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
-    
+
     if (!authTokenPair) {
       console.error('[AuditLog] auth_token cookie missing');
       return jsonResponse(401, { error: 'Session cookie missing' });
@@ -112,17 +115,14 @@ exports.handler = async (event, context) => {
     return jsonResponse(401, { error: 'Invalid session' });
   }
 
-  // Debug logging for troubleshooting
-  console.log('[AuditLog] Authenticated user:', userId);
-
-  // 4. Rate Limiting - ATOMIC check using Lua script
+  // 4. Rate Limiting - ATOMIC check
   const rateKey = `audit_log_read:${userId}`;
-  
+
   let rateLimitResult;
   try {
     rateLimitResult = await redis.checkRateLimit(
-      rateKey, 
-      MAX_REQUESTS_PER_MINUTE, 
+      rateKey,
+      MAX_REQUESTS_PER_MINUTE,
       RATE_LIMIT_WINDOW
     );
   } catch (redisErr) {
@@ -131,18 +131,18 @@ exports.handler = async (event, context) => {
   }
 
   if (!rateLimitResult.allowed) {
-    return jsonResponse(429, { 
-      error: 'Too many requests. Please slow down.', 
-      retryAfter: rateLimitResult.ttl 
+    return jsonResponse(429, {
+      error: 'Too many requests. Please slow down.',
+      retryAfter: rateLimitResult.ttl
     }, {
       'Retry-After': String(rateLimitResult.ttl)
     });
   }
 
-  // 5. Authenticate & Check Admin Status
+  // 5. Determine Admin Status
   let isAdmin = false;
   const currentUserId = String(userId).trim().toLowerCase();
-  
+
   if (ADMIN_USER_IDS.includes(currentUserId)) {
     isAdmin = true;
     console.log(`[AuditLog] Admin access granted for user: ${currentUserId}`);
@@ -150,9 +150,19 @@ exports.handler = async (event, context) => {
     console.log(`[AuditLog] Non-admin access for user: ${currentUserId}. Showing only own logs.`);
   }
 
-  // 6. Parse Query Params
+  // 6. ✅ FIXED: MFA gate applies to ADMINS ONLY.
+  // The unconditional gate locked regular users (including non-MFA users)
+  // out of viewing their OWN logs — a standard app page. Admin sees every
+  // user's data, so demanding factor proof there is proportionate.
+  // MFA is optional in this product; regular-user self-reading is not gated.
+  if (isAdmin) {
+    const mfaError = requireMFA(event);
+    if (mfaError) return mfaError;
+  }
+
+  // 7. Parse Query Params
   const { limit = '50', offset = '0', userId: filterUserId } = event.queryStringParameters || {};
-  
+
   const safeLimit = Math.min(parseInt(limit, 10) || 50, 100);
   const safeOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
@@ -174,7 +184,9 @@ exports.handler = async (event, context) => {
     } else {
       // Admins can filter by any user or see all logs
       if (filterUserId) {
-        if (isNaN(parseInt(filterUserId))) {
+        // ✅ FIX: validate as UUID (user ids are uuids), not parseInt —
+        // parseInt rejected every valid filter, breaking admin filtering.
+        if (!UUID_REGEX.test(filterUserId)) {
           return jsonResponse(400, { error: 'Invalid user ID filter' });
         }
         query = `
@@ -198,8 +210,6 @@ exports.handler = async (event, context) => {
 
     const result = await client.query(query, params);
 
-    // ✅ Rate limit already incremented by checkRateLimit - no manual increment needed
-
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
 
     return jsonResponse(200, {
@@ -209,7 +219,7 @@ exports.handler = async (event, context) => {
         ...row,
         // Sanitize: Never expose IP addresses to non-admins
         ip_address: isAdmin ? row.ip_address : 'hidden',
-        // Mask user_id for non-admin viewing other users' logs
+        // user_id only surfaced to admins
         user_id: isAdmin ? row.user_id : undefined
       }))
     }, {
@@ -219,6 +229,7 @@ exports.handler = async (event, context) => {
       'Pragma': 'no-cache',
       'Expires': '0',
       'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
       'Vary': 'Origin'
     });
 

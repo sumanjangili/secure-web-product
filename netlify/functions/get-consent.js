@@ -8,10 +8,36 @@ const RATE_LIMIT_KEY_PREFIX = 'consent_get:';
 const MAX_REQUESTS_PER_MINUTE = 30;
 const RATE_LIMIT_WINDOW = 60;
 
-const pool = new Pool({ 
+// --- Allowed Origins Configuration (exact match, shared with other handlers) ---
+const ALLOWED_ORIGINS = [
+  'https://app.indoscient.in',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+];
+
+function getAllowedOrigin(requestedOrigin) {
+  if (!requestedOrigin) return null;
+
+  const normalized = requestedOrigin.toLowerCase();
+  for (const origin of ALLOWED_ORIGINS) {
+    if (normalized === origin.toLowerCase()) {
+      return origin;
+    }
+  }
+
+  // Localhost variants permitted only outside Netlify (local dev)
+  if (normalized.includes('localhost') && !process.env.NETLIFY) {
+    return requestedOrigin;
+  }
+
+  return null;
+}
+
+const pool = new Pool({
   connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production' 
-    ? { rejectUnauthorized: false } 
+  ssl: process.env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
     : false
 });
 
@@ -19,19 +45,21 @@ if (!dbUrl) {
   console.error('FATAL: DATABASE_URL environment variable is missing.');
 }
 
-exports.handler = async (event, context) => {
-  // 1. Handle CORS Preflight
+exports.handler = async (event) => {
+  // 1. Handle CORS Preflight — whitelist only, never echo arbitrary origins
   if (event.httpMethod === 'OPTIONS') {
-    const origin = event.headers.origin || '*';
+    const allowedOrigin = getAllowedOrigin(event.headers.origin);
+
     return {
       statusCode: 204,
       headers: {
-        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Origin': allowedOrigin || '*',
         'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token, Authorization',
-        'Access-Control-Max-Age': '86400'
-      }
+        'Access-Control-Max-Age': '86400',
+        'Vary': 'Origin',
+      },
     };
   }
 
@@ -40,11 +68,10 @@ exports.handler = async (event, context) => {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
-  // ✅ KEY FIX: SKIP CSRF for GET requests (read-only operations don't need CSRF protection)
-  // CSRF should only protect state-changing operations (POST, PUT, DELETE)
+  // GET requests need no CSRF (read-only). Still require authentication.
 
-  // 3. Extract and Verify Auth Token (NO CSRF needed!)
-  let userId = null;
+  // 3. Extract and Verify Auth Token
+  let userId;
   try {
     const cookies = event.headers.cookie;
     if (!cookies) {
@@ -53,9 +80,9 @@ exports.handler = async (event, context) => {
 
     const cookiePairs = cookies.split(';');
     const authTokenPair = cookiePairs.find(pair => pair.trim().startsWith('auth_token='));
-    
+
     if (!authTokenPair) {
-      return { statusCode: 401, body: JSON.stringify({ error: 'Authentication required. Session cookie missing.' }) };
+      return { statusCode: 401, body: JSON.stringify({ error: 'Session cookie missing' }) };
     }
 
     const token = authTokenPair.split('=')[1];
@@ -66,29 +93,37 @@ exports.handler = async (event, context) => {
     return { statusCode: 401, body: JSON.stringify({ error: 'Session expired or invalid' }) };
   }
 
-  // 4. Rate Limiting Check
+  // 4. Rate Limiting — ATOMIC via checkRateLimit.
+  //    Increments unconditionally, so BOTH paths below are throttled.
   const rateKey = `${RATE_LIMIT_KEY_PREFIX}${userId}`;
-  let attempts = 0;
-  
+
+  let rateLimitResult;
   try {
-    const attemptsStr = await redis.get(rateKey);
-    attempts = attemptsStr ? parseInt(attemptsStr, 10) : 0;
+    rateLimitResult = await redis.checkRateLimit(
+      rateKey,
+      MAX_REQUESTS_PER_MINUTE,
+      RATE_LIMIT_WINDOW
+    );
   } catch (redisErr) {
     console.warn('[GetConsent] Redis error (non-fatal):', redisErr.message);
+    rateLimitResult = { allowed: true, count: 0, ttl: RATE_LIMIT_WINDOW };
   }
 
-  if (attempts >= MAX_REQUESTS_PER_MINUTE) {
-    const ttl = await redis.ttl(rateKey).catch(() => RATE_LIMIT_WINDOW);
+  if (!rateLimitResult.allowed) {
     return {
       statusCode: 429,
-      body: JSON.stringify({ 
-        error: 'Too many requests. Please slow down.', 
-        retryAfter: ttl > 0 ? ttl : RATE_LIMIT_WINDOW 
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': String(rateLimitResult.ttl),
+      },
+      body: JSON.stringify({
+        error: 'Too many requests. Please slow down.',
+        retryAfter: rateLimitResult.ttl,
       }),
     };
   }
 
-  // 5. Fetch Consent (with public. schema prefix)
+  // 5. Fetch Latest Consent (history model: newest row wins)
   const client = await pool.connect();
   try {
     const result = await client.query(
@@ -100,60 +135,48 @@ exports.handler = async (event, context) => {
       [userId]
     );
 
-    if (result.rows.length === 0) {
-      // No consent found yet -> Return default (all rejected except essential)
-      const origin = event.headers.origin;
-      const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
-        ? origin 
-        : 'https://app.indoscient.in';
+    const allowedOrigin = getAllowedOrigin(event.headers.origin);
 
+    if (result.rows.length === 0) {
+      // FIX: No consent record = NO consent given.
+      // essential: false ensures the frontend ConsentBanner renders.
+      // Returning essential: true here caused the banner to stay hidden.
       return {
         statusCode: 200,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': allowedOrigin,
+          'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
           'Access-Control-Allow-Credentials': 'true',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, private'
+          'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+          'Vary': 'Origin',
         },
         body: JSON.stringify({
-          essential: true,    // Essential always allowed
-          analytics: false,   // Default to rejected
+          essential: false,
+          analytics: false,
           version: '1.0',
-          timestamp: null
-        })
+          timestamp: null,
+        }),
       };
     }
 
     const record = result.rows[0];
-    
-    // Increment rate limit
-    try {
-      await redis.incr(rateKey);
-      await redis.expire(rateKey, RATE_LIMIT_WINDOW);
-    } catch (redisErr) {
-      console.warn('[GetConsent] Redis incr failed:', redisErr.message);
-    }
-
-    const origin = event.headers.origin;
-    const allowedOrigin = origin && (origin.includes('indoscient.in') || origin.includes('localhost')) 
-      ? origin 
-      : 'https://app.indoscient.in';
 
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': allowedOrigin,
+        'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
         'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-        'X-Content-Type-Options': 'nosniff'
+        'X-Content-Type-Options': 'nosniff',
+        'Vary': 'Origin',
       },
       body: JSON.stringify({
         essential: record.essential,
         analytics: record.analytics,
         version: record.version,
-        timestamp: record.timestamp
-      })
+        timestamp: record.timestamp,
+      }),
     };
 
   } catch (error) {

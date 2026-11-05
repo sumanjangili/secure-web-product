@@ -4,8 +4,9 @@
  * Logout Handler
  *
  * Strategy:
- * 1. CSRF validation is NON-BLOCKING - user must always be able to logout
+ * 1. CSRF validation is NON-BLOCKING — user must always be able to logout
  * 2. Clear both auth_token and csrf_token immediately with proper attributes
+ * 3. Domain attribute MATCHES login.js to ensure cookies are actually deleted
  */
 
 const { validateCsrf } = require('./_middleware/csrf-check');
@@ -56,8 +57,9 @@ function jsonResponse(statusCode, data, extraHeaders = {}) {
 /**
  * Builds Set-Cookie strings that delete a cookie.
  * 
- * With the /api/* proxy in netlify.toml, cookies are SAME-ORIGIN, so we DON'T
- * need the Domain attribute. This simplifies cookie deletion significantly.
+ * CRITICAL: Domain attribute must MATCH login.js for same-named cookies.
+ * If login sets Domain=.indoscient.in, logout must also set it, otherwise
+ * the browser treats them as different cookies and deletion fails.
  * 
  * @param {string} name      Cookie name
  * @param {boolean} httpOnly Whether the original cookie was HttpOnly
@@ -75,13 +77,14 @@ function buildDeletionCookies(name, { httpOnly }) {
   if (isProd) attrs.push('Secure');
 
   // Mirror SameSite mode from login (None in prod, Lax in dev)
-  // Even though we're now same-origin via proxy, this maintains consistency
   attrs.push(`SameSite=${isProd ? 'None' : 'Lax'}`);
 
-  // ADD Domain attribute to match login.js!
+  // ✅ CRITICAL FIX: ADD Domain to match login.js exactly!
+  // Without this, cookies set with Domain=.indoscient.in CANNOT be deleted.
   if (isProd) {
-    return [`${name}=; ${attrs.join('; ')}; Domain=.indoscient.in`];
+    attrs.push('Domain=.indoscient.in');
   }
+
   return [`${name}=; ${attrs.join('; ')}`];
 }
 

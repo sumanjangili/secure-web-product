@@ -3,6 +3,7 @@ const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { validateCsrf } = require('./_middleware/csrf-check');
+const { requireMFAIfEnrolled } = require('./_middleware/require-mfa');
 
 const dbUrl = process.env.DATABASE_URL;
 const MAX_SAVES_PER_MINUTE = 10;
@@ -46,8 +47,8 @@ if (!dbUrl) {
 async function logAuditEvent(client, userId, eventType, details, ipAddress) {
   try {
     const compliantDetails = {
-      event_type: String(eventType),           // REQUIRED first — never overwritten
-      timestamp: new Date().toISOString(),     // REQUIRED first — never overwritten
+      event_type: String(eventType),
+      timestamp: new Date().toISOString(),
       ip_address: ipAddress || 'unknown',
       ...(details || {}),
     };
@@ -126,7 +127,7 @@ exports.handler = async (event, context) => {
     return jsonResponse(401, { error: 'Invalid or expired session' });
   }
 
-  // 5. Rate Limiting — ATOMIC via checkRateLimit (closes get/incr race)
+  // 5. Rate Limiting — ATOMIC via checkRateLimit
   const rateKey = `secure_data_save:${userId}`;
 
   let rateLimitResult;
@@ -187,14 +188,32 @@ exports.handler = async (event, context) => {
 
   const client = await pool.connect();
   try {
-    // 8. Insert Encrypted Blob
+    // 8. ✅ CONDITIONAL gate (MFA is optional):
+    // Fetch mfa_enabled so the middleware can distinguish:
+    // - MFA-disabled user → passes (otherwise they'd be locked out entirely)
+    // - MFA-enabled user, verified this session → passes
+    // - MFA-enabled user, SKIPPED MFA step → 403 (the actual threat model:
+    //   someone with the password must still prove possession of the factor)
+    const userResult = await client.query(
+      'SELECT mfa_enabled FROM public.users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return jsonResponse(404, { error: 'User not found' });
+    }
+
+    const mfaError = requireMFAIfEnrolled(event, userResult.rows[0].mfa_enabled);
+    if (mfaError) return mfaError;
+
+    // 9. Insert Encrypted Blob
     await client.query(
       `INSERT INTO public.secure_data (user_id, ciphertext, salt, iv, created_at)
        VALUES ($1, $2, $3, $4, NOW())`,
       [userId, ciphertext, salt, iv]
     );
 
-    // 9. Log Event
+    // 10. Log Event
     const ipAddress = context.identity?.sourceIp || 'unknown';
 
     try {
@@ -205,8 +224,6 @@ exports.handler = async (event, context) => {
     } catch (auditErr) {
       console.error('[SaveSecureData] Audit FAILED (ignored):', auditErr.message);
     }
-
-    // ✅ Rate limit already incremented by checkRateLimit — no manual incr
 
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
 

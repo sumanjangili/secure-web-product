@@ -115,7 +115,7 @@ export async function encrypt(plainText: string, password: string): Promise<{
       iv: bufferToBase64(iv)
     };
   } catch (error) {
-    if (import.meta.env.VITE_DEBUG_MODE === "true") {
+    if (import.meta.env.VITE_SECURE_FETCH_DEBUG === "true") {
       console.error("[Crypto] Encryption error:", error);
     }
     // Do not expose internal error details to the user
@@ -161,7 +161,7 @@ export async function decrypt(
       // This usually means the password was wrong or the data was tampered with
       throw new Error("[Crypto] Decryption failed: Invalid password or corrupted data.");
     }
-    if (import.meta.env.VITE_DEBUG_MODE === "true") {
+    if (import.meta.env.VITE_SECURE_FETCH_DEBUG === "true") {
       console.error("[Crypto] Decryption error:", error);
     }
     throw new Error("[Crypto] Decryption failed.");
