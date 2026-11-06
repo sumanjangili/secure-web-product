@@ -1,11 +1,11 @@
 // frontend/src/components/LoginForm.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { secureFetchJson, checkAuthStatus, ApiError } from "../lib/fetch-helper";
+import { secureFetchJson, checkAuthStatus, ApiError, getErrorMessage } from "../lib/fetch-helper";
 
 type LoginStep = "credentials" | "mfa" | "backup-code";
 
 interface LoginFormProps {
-  onLoginSuccess: (userId: string) => void;
+  onLoginSuccess: () => void;
   /**
    * Where to redirect users who arrive already authenticated.
    * Leave undefined to disable the check (e.g., if this form is also
@@ -77,50 +77,44 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, redirectIfAuthent
    *   HEADER (which save-consent/login now send and fetch-helper parses).
    * - Guards against non-ApiError throwables.
    */
-  const handleApiError = useCallback((err: unknown, fallbackMessage: string) => {
-    if (!mountedRef.current) return;
+    const handleApiError = useCallback((err: unknown, fallbackMessage: string) => {
+      if (!mountedRef.current) return;
 
-    if (err instanceof ApiError) {
-      if (err.status === 429) {
-        const bodyValue = Number(err.data?.retryAfter);
-        const waitTime =
-          Number.isFinite(bodyValue) && bodyValue > 0
-            ? bodyValue
-            : (err.retryAfter ?? 900); // 15 min default matches backend lockout
+      if (err instanceof ApiError) {
+        if (err.status === 429) {
+          const bodyValue = Number(err.data?.retryAfter);
+          const waitTime =
+            Number.isFinite(bodyValue) && bodyValue > 0
+              ? bodyValue
+              : (err.retryAfter ?? 900); // 15 min default matches backend lockout
 
-        setRetryAfter(waitTime);
-        setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minute(s).`);
+          setRetryAfter(waitTime);
+          setError(`Too many attempts. Please wait ${Math.ceil(waitTime / 60)} minute(s).`);
+          return;
+        }
+
+        if (err.status === 403) {
+          setError("Security check failed. Please refresh the page and try again.");
+          return;
+        }
+
+        if (err.status === 401) {
+          setError(getErrorMessage(err.data, "Invalid credentials"));
+          return;
+        }
+
+        setError(getErrorMessage(err.data, '') || err.message || fallbackMessage);
         return;
       }
 
-      if (err.status === 403) {
-        setError("Security check failed. Please refresh the page and try again.");
+      // Non-ApiError throw (network failure, TypeError, etc.)
+      if (err instanceof Error) {
+        setError(err.message || fallbackMessage);
         return;
       }
 
-      if (err.status === 401) {
-        const msg = err.data?.error;
-        setError(typeof msg === 'string' && msg ? msg : "Invalid credentials");
-        return;
-      }
-
-            const msg = err.data?.error;
-      setError(
-        (typeof msg === 'string' && msg ? msg : '') ||
-          err.message ||
-          fallbackMessage
-      );
-      return;
-    }
-
-    // Non-ApiError throw (network failure, TypeError, etc.)
-    if (err instanceof Error) {
-      setError(err.message || fallbackMessage);
-      return;
-    }
-
-    setError(fallbackMessage);
-  }, []);
+      setError(fallbackMessage);
+    }, []);
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,7 +147,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, redirectIfAuthent
         setStep("mfa");
       } else {
         setPassword("");
-        onLoginSuccess(data.userId);
+        onLoginSuccess();
       }
     } catch (err: unknown) {
       handleApiError(err, "Login failed");
@@ -171,11 +165,9 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, redirectIfAuthent
     setError("");
 
     try {
-      const data = await secureFetchJson<{
+      await secureFetchJson<{
         success: boolean;
-        userId: string;
         message: string;
-        requiresBackupCode?: boolean;
       }>("/verify-mfa", {
         method: "POST",
         body: JSON.stringify({ mfaCode, method: "totp" }),
@@ -187,7 +179,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, redirectIfAuthent
       setPassword("");
       setMfaCode("");
       setBackupCode("");
-      onLoginSuccess(data.userId);
+      onLoginSuccess();
     } catch (err: unknown) {
       handleApiError(err, "MFA verification failed");
 
@@ -211,9 +203,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, redirectIfAuthent
     setError("");
 
     try {
-      const data = await secureFetchJson<{
+      await secureFetchJson<{
         success: boolean;
-        userId: string;
         message: string;
       }>("/verify-mfa", {
         method: "POST",
@@ -226,7 +217,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, redirectIfAuthent
       setPassword("");
       setMfaCode("");
       setBackupCode("");
-      onLoginSuccess(data.userId);
+      onLoginSuccess();
     } catch (err: unknown) {
       handleApiError(err, "Backup code invalid or already used");
     } finally {

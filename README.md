@@ -146,9 +146,7 @@ netlify functions:serve
 
 This project is designed to be deployed on Netlify.
 
-1. Connect Repository
-
-Connect your GitHub repository to Netlify.
+1. Connect Repository — connect your GitHub repository to Netlify.
    
 2. Build Settings
    
@@ -162,10 +160,12 @@ Connect your GitHub repository to Netlify.
 3. Environment Variables
 > Settings → Build & Deploy → Environment and a all required secrets.
    
-4. **Deploy**: Push to main branch.
-> "
 > ⚠ **Security Warning**: Never commit secrets (like AUDIT_SECRET) to the repsitory. Use Netlify's environment variable management. 
-> "
+
+4. **Deploy**: Push to the main branch.
+**Cookie Contract (Important)**
+
+login.js, logout.js, and delete-user.js share a single cookie contract: cookies set with Domain=.indoscient.in and SameSite=None; Secure in production must be deleted with the exact same attributes. If you change one file's cookie building, change all three in the same commit — attribute mismatches are the classic cause of "still logged in after logout" bugs.
 
 ---
 
@@ -231,19 +231,21 @@ All artefacts live under `docs/` and are version‑controlled alongside the code
 
 Before deploying to production:
 
--  AUDIT_SECRET is set in Netlify env vars.
--  DATABASE_URL points to production DB.
--  UPSTASH credentials are set for Redis.
--  No plaintext data is logged to console.
--  MFA flow (Init → Verify → Login) works end-to-end.
--  Backup codes are generated and usable.
--  Account erasure (delete-user) works correctly.
--  Consent flow: Local storage is plain JSON, server record is encrypted.
--  npm audit shows no critical vulnerabilities.
-
-Run through the automated checklist before any release: 👉 [Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
+- AUDIT_SECRET is set in Netlify env vars.
+- DATABASE_URL points to production DB.
+- JWT_SECRET is set and rotated from the default.
+- ADMIN_USER_IDS contains valid admin UUIDs.
+- UPSTASH credentials are set for Redis.
+- No plaintext data is logged to console.
 
 ---
+
+#### Database
+
+- chk_event_type_valid constraint includes every event type emitted by the code (LOGIN_, ERASURE_, CONSENT_UPDATED, MFA_, BACKUP_CODES_, SECURE_TICKET_CREATED, DATA_ACCESS_GRANTED).
+- audit_logs.user_id FK uses ON DELETE SET NULL (erasure trail survives account deletion).
+- consent_records uses the append-only model (no unique constraint on user_id; plain INSERT, newest-wins reads).
+
 
 #### Flows (end-to-end)
 
@@ -254,6 +256,12 @@ Run through the automated checklist before any release: 👉 [Verification check
 - Logout actually clears auth_token and csrf_token (cookie attributes match login exactly — verify in DevTools).
 - Account erasure requires password re-confirmation, clears both cookies, and audit rows survive with user_id = NULL.
 - Consent flow: banner appears for users with no record; local storage is plain JSON; server record persists via plain INSERT (no ON CONFLICT); rollback works when the save fails.
+
+#### Supply chain
+
+- npm audit shows no critical or high vulnerabilities.
+
+> Run through the automated checklist before any release: 👉 [Verification checklist → VERIFY_CHECKLIST.md](VERIFY_CHECKLIST.md)
 
 ---
 

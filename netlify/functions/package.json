@@ -1,6 +1,6 @@
 {
   "name": "secure-web-functions",
-  "version": "1.0.1",
+  "version": "1.2.0",
   "private": true,
   "dependencies": {
     "argon2": "^0.44.0",

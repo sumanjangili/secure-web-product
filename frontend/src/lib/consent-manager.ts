@@ -1,5 +1,5 @@
 // frontend/src/lib/consent-manager.ts
-import { secureFetchJson } from './fetch-helper'; // ✅ Import the secure helper
+import { secureFetchJson } from './fetch-helper'; // ✅ Secure helper (CSRF + credentials)
 
 interface ConsentData {
   essential: boolean;
@@ -10,15 +10,18 @@ interface ConsentData {
 
 const CONSENT_STORAGE_KEY = "user_consent_v1";
 
+/** Listener receives the refreshed consent snapshot (may be inspected by callers). */
+type ConsentListener = (_consent: ConsentData | null) => void;
+
 class ConsentManagerClass {
   private cachedConsent: ConsentData | null = null;
-  private listeners: ((consent: ConsentData | null) => void)[] = [];
+  private listeners: ConsentListener[] = [];
 
   /**
    * Retrieves the current consent status from localStorage.
    * Returns null if no consent is found.
-   * 
-   * Note: Local storage uses plain JSON for UX speed. 
+   *
+   * Note: Local storage uses plain JSON for UX speed.
    * The server holds the authoritative record.
    */
   async getConsent(): Promise<ConsentData | null> {
@@ -33,7 +36,7 @@ class ConsentManagerClass {
 
     try {
       const data = JSON.parse(stored) as ConsentData;
-      
+
       // Basic validation
       if (typeof data.essential !== 'boolean' || typeof data.analytics !== 'boolean') {
         console.warn("Stored consent data is malformed.");
@@ -59,9 +62,9 @@ class ConsentManagerClass {
 
   /**
    * Saves consent data to the server and updates local storage.
-   * Implements a "Write-Behind" pattern: Local update first for UX, 
+   * Implements a "Write-Behind" pattern: Local update first for UX,
    * then sync to server. If server fails, local state is reverted.
-   * 
+   *
    * @param consentData - The consent object to save
    */
   async saveConsent(consentData: ConsentData): Promise<void> {
@@ -75,7 +78,7 @@ class ConsentManagerClass {
       this.cachedConsent = consentData;
 
       // 2. Send to backend
-      // ✅ Using secureFetchJson: Automatically handles CSRF token and credentials
+      // ✅ secureFetchJson: automatically handles CSRF token and credentials
       await secureFetchJson("/save-consent", {
         method: "POST",
         body: JSON.stringify(consentData),
@@ -83,9 +86,9 @@ class ConsentManagerClass {
 
       // 3. Success: Notify listeners
       this.notifyConsentUpdated();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to save consent:", error);
-      
+
       // ROLLBACK: Revert local storage and cache to previous state
       if (previousStorage) {
         localStorage.setItem(CONSENT_STORAGE_KEY, previousStorage);
@@ -94,8 +97,8 @@ class ConsentManagerClass {
       }
       this.cachedConsent = previousConsent;
 
-      // Re-throw to let the UI (ConsentBanner) handle the error message
-      // The error object from secureFetchJson has .status and .data properties
+      // Re-throw to let the UI (ConsentBanner) handle the error message.
+      // The error object from secureFetchJson has .status and .data properties.
       throw error;
     }
   }
@@ -106,12 +109,12 @@ class ConsentManagerClass {
    */
   async isAllowed(category: "essential" | "analytics"): Promise<boolean> {
     const consent = await this.getConsent();
-    
+
     if (!consent) return false; // No consent given yet
 
     if (category === "essential") return true;
     if (category === "analytics") return consent.analytics;
-    
+
     return false;
   }
 
@@ -131,7 +134,7 @@ class ConsentManagerClass {
    * Subscribes a callback to listen for consent changes.
    * Returns an unsubscribe function.
    */
-  subscribe(listener: (consent: ConsentData | null) => void) {
+  subscribe(listener: ConsentListener) {
     this.listeners.push(listener);
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);

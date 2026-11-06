@@ -168,17 +168,30 @@ exports.handler = async (event, context) => {
       method: 'totp',
     };
 
-    await client.query(
-      `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address)
-       VALUES ($1, $2, $3, NOW(), $4)`,
-      [userId, eventType, JSON.stringify(safeDetails), ipAddress]
-    );
+    // ✅ FIX: Transaction — the audit INSERT and the secret UPDATE are now
+    // atomic. Previously a crash between them produced an audit record with
+    // no matching secret rotation (or vice versa).
+    await client.query('BEGIN');
 
-    // 9. Store Secret in Database
-    await client.query(
-      `UPDATE public.users SET mfa_secret = $1, mfa_enabled = false WHERE id = $2`,
-      [secret, userId]
-    );
+    try {
+      await client.query(
+        `INSERT INTO public.audit_logs (user_id, event_type, details, timestamp, ip_address)
+         VALUES ($1, $2, $3, NOW(), $4)`,
+        [userId, eventType, JSON.stringify(safeDetails), ipAddress]
+      );
+
+      // 9. Store Secret in Database
+      await client.query(
+        `UPDATE public.users SET mfa_secret = $1, mfa_enabled = false WHERE id = $2`,
+        [secret, userId]
+      );
+
+      await client.query('COMMIT');
+    } catch (dbError) {
+      await client.query('ROLLBACK');
+      console.error('[MFA Init] Database transaction failed:', dbError);
+      throw dbError;
+    }
 
     // 10. Return Response
     // CRITICAL: DO NOT return 'secret' in the JSON body — the otpAuthUrl is

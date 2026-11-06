@@ -1,6 +1,5 @@
 // frontend/eslint.config.js
 import js from "@eslint/js";
-// REMOVED: import globals from "globals"; (We define them manually now)
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
@@ -24,6 +23,9 @@ const browserGlobals = {
   clearTimeout: "readonly",
   setImmediate: "readonly",
   queueMicrotask: "readonly",
+  // ✅ ADDED: timers used by LoginForm lockout countdown
+  setInterval: "readonly",
+  clearInterval: "readonly",
 };
 
 const nodeGlobals = {
@@ -66,6 +68,8 @@ export default tseslint.config(
       globals: {
         ...browserGlobals,
         ...nodeGlobals,
+        TextEncoder: "readonly",
+    TextDecoder: "readonly",
       },
     },
   },
@@ -150,10 +154,24 @@ export default tseslint.config(
         { allowConstantExport: true },
       ],
       "no-console": "off",
-      "no-undef": "error",
     },
     settings: {
       react: { version: "detect" },
+    },
+  },
+
+  // ADDED: flat-config override — base JS rules that duplicate TypeScript's
+  // own checks are disabled for TS files (must come AFTER the src block).
+  // - no-undef: TS compiler owns undefined-global detection; ESLint's rule
+  //   doesn't know TS ambient types, hence the React/setInterval false positives.
+  // - no-unused-vars: duplicated by @typescript-eslint/no-unused-vars above,
+  //   which is the variant that honors ^_ ignore patterns.
+  {
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    rules: {
+      "no-undef": "off",
+      "no-unused-vars": "off",
+      "no-empty": "error", // keep — TS doesn't check this; empty catches were a real finding
     },
   },
 );

@@ -4,7 +4,7 @@ import ConsentBanner from "./components/ConsentBanner";
 import SecureForm from "./components/SecureForm";
 import LoginForm from "./components/LoginForm";
 import UserSettings from "./components/UserSettings";
-import { secureFetchJson } from "./lib/fetch-helper"; 
+import { secureFetchJson, ApiError } from "./lib/fetch-helper";
 
 interface UserProfile {
   id: string;
@@ -38,7 +38,7 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  
+
   // Simple flag to prevent double execution
   const authChecked = useRef(false);
 
@@ -51,14 +51,22 @@ const App: React.FC = () => {
         const data = await secureFetchJson<UserProfile>("/get-user-profile");
         setCurrentUser(data);
         setIsLoggedIn(true);
-      } catch (err: any) {
-        if (err?.status === 401) {
-          setIsLoggedIn(false);
-          setCurrentUser(null);
-        } else if (err?.status === 403) {
-          window.location.replace('/login?force_reset=true');
-          return;
+      } catch (err: unknown) {
+        if (err instanceof ApiError) {
+          if (err.status === 401) {
+            // No session / expired — normal unauthenticated state
+            setIsLoggedIn(false);
+            setCurrentUser(null);
+          } else if (err.status === 403) {
+            // CSRF/cookie-attribute mismatch — force a clean login
+            window.location.replace('/login?force_reset=true');
+            return;
+          } else {
+            setIsLoggedIn(false);
+            setCurrentUser(null);
+          }
         } else {
+          // Network failure etc. — treat as unauthenticated
           setIsLoggedIn(false);
           setCurrentUser(null);
         }
@@ -73,8 +81,12 @@ const App: React.FC = () => {
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
-    try { await secureFetchJson("/logout", { method: 'POST' }); } catch (e) {}
-    finally {
+    try {
+      await secureFetchJson("/logout", { method: 'POST' });
+    } catch {
+      // Best-effort: network failure on logout must not block clearing local
+      // state — the backend session dies via cookie expiry regardless.
+    } finally {
       setCurrentUser(null);
       setIsLoggedIn(false);
       window.location.href = '/login';
@@ -86,7 +98,11 @@ const App: React.FC = () => {
       const data = await secureFetchJson<UserProfile>("/get-user-profile");
       setCurrentUser(data);
       setIsLoggedIn(true);
-    } catch (e) { handleLogout(); }
+    } catch {
+      // Profile fetch failed post-login — fall back to logout so the user
+      // sees a clean unauthenticated state rather than a broken dashboard.
+      handleLogout();
+    }
   }, [handleLogout]);
 
   if (isLoading) {
@@ -99,7 +115,7 @@ const App: React.FC = () => {
       <div style={{ marginBottom: "1.5rem", padding: "0.75rem", backgroundColor: isLoggedIn ? "#e8f5e9" : "#ffebee", borderRadius: "4px" }}>
         <strong>Status:</strong> {isLoggedIn ? "✅ Logged In" : "❌ Not Logged In"}
         {currentUser && <span> ({currentUser.email})</span>}
-        {isLoggedIn && <button onClick={handleLogout} style={{ marginLeft: "1rem" }}>Logout</button>}
+        {isLoggedIn && <button onClick={handleLogout} disabled={isLoggingOut}>{isLoggingOut ? "Logging out…" : "Logout"}</button>}
       </div>
 
       <ErrorBoundary>

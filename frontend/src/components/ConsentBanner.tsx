@@ -1,7 +1,7 @@
 // frontend/src/components/ConsentBanner.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { ConsentManager } from "../lib/consent-manager";
-import { secureFetchJson, ApiError } from "../lib/fetch-helper";
+import { secureFetchJson, ApiError, getErrorMessage } from "../lib/fetch-helper";
 
 interface ConsentBannerProps {
   userSessionKey?: string;
@@ -118,9 +118,7 @@ const ConsentBanner: React.FC<ConsentBannerProps> = ({ userSessionKey }) => {
             setErrorMessage("Too many updates. Please wait a moment and try again.");
           } else {
             setErrorMessage(
-              typeof error.data?.error === "string"
-                ? error.data.error
-                : "Could not save consent. Please try again."
+              getErrorMessage(error.data, "Could not save consent. Please try again.")
             );
           }
         } else {

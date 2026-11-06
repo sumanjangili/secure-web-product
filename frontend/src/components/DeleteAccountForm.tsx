@@ -1,6 +1,6 @@
 // frontend/src/components/DeleteAccountForm.tsx
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { secureFetchJson, ApiError } from '../lib/fetch-helper';
+import { secureFetchJson, ApiError, getErrorMessage } from '../lib/fetch-helper';
 
 const CONFIRM_PHRASE = 'DELETE';
 
@@ -70,8 +70,9 @@ export const DeleteAccountForm = () => {
               : 60;
             setError(`Too many deletion attempts. Please try again in ${waitMin} minute(s) or contact support.`);
           } else {
-            const msg = err.data?.error;  
-            setError(typeof msg === 'string' && msg ? msg : err.message || 'Deletion failed');
+            setError(
+              getErrorMessage(err.data, err.message || 'Deletion failed')
+            );
           }
         } else {
           setError('Network error. Try again.');

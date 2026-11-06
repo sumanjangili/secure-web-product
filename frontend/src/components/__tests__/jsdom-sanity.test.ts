@@ -4,9 +4,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 describe("JSDOM Environment Sanity", () => {
   beforeEach(() => {
     // Ensure clean state before each test
-    if (typeof window !== "undefined") {
-      (window as any).localStorage.clear();
-    }
+    localStorage.clear();
   });
 
   it("provides a valid window object", () => {

@@ -1,6 +1,6 @@
 // frontend/src/components/MFASetup.tsx
 import React, { useState, useEffect, useRef } from "react";
-import { secureFetchJson } from "../lib/fetch-helper"; 
+import { secureFetchJson, ApiError, getErrorMessage } from "../lib/fetch-helper";
 import QRCode from 'qrcode';
 
 type Step = "enable" | "scan" | "backup" | "complete";
@@ -37,8 +37,12 @@ const MFASetup: React.FC<MFASetupProps> = ({ onSuccess }) => {
       
       setOtpAuthUrl(data.otpAuthUrl);
       setStep("scan");
-    } catch (error: any) {
-      setError(error.data?.error || (error instanceof Error ? error.message : "Failed to initialize MFA"));
+    } catch (error: unknown) {
+      if (error instanceof ApiError) {
+      setError(getErrorMessage(error.data, error.message || "Failed to initialize MFA"));  
+      } else {
+        setError(error instanceof Error ? error.message : "Failed to initialize MFA");
+      } 
     } finally {
       setLoading(false);
     }
@@ -82,8 +86,12 @@ const MFASetup: React.FC<MFASetupProps> = ({ onSuccess }) => {
 
       setBackupCodes(data.backupCodes);
       setStep("backup");
-    } catch (error: any) {
-      setError(error.data?.error || (error instanceof Error ? error.message : "Verification failed"));
+    } catch (error: unknown) {
+      if (error instanceof ApiError) {
+      setError(getErrorMessage(error.data, error.message || "Verification failed"));
+      } else {
+        setError(error instanceof Error ? error.message : "Verification failed");
+      } 
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,6 @@
 {
   "name": "@sumanjangili/secure-web-product",
-  "version": "1.0.1",
+  "version": "1.2.0",
   "description": "Secure web product with MFA, rate limiting, and encrypted data storage.",
   "main": "index.js",
   "directories": {
@@ -8,13 +8,24 @@
     "functions": "netlify/functions"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run test:frontend && npm run test:functions",
     "validate": "node scripts/validate-env.js",
     "start": "npm run validate && netlify dev",
     "dev": "concurrently \"npm run dev:functions\" \"npm run dev:frontend\"",
     "dev:functions": "netlify functions:serve",
     "dev:frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build"
+    "build": "cd frontend && npm run build",
+    "test:frontend": "npm --prefix frontend run test:run",
+    "test:functions": "npm --prefix frontend exec -- vitest run --root ../netlify/functions --passWithNoTests",
+    "lint": "npm run lint:frontend && npm run lint:functions",
+    "lint:frontend": "cd frontend && eslint .",
+    "lint:functions": "eslint \"netlify/functions/**/*.js\"",
+    "type-check": "npm run type-check:frontend",
+    "type-check:frontend": "cd frontend && tsc --noEmit",
+    "type-check:functions": "tsc --noEmit -p netlify/functions",
+    "audit": "npm run audit:frontend && npm run audit:functions",
+    "audit:frontend": "cd frontend && npx audit-ci --moderate",
+    "audit:functions": "cd netlify/functions && npm audit --omit=dev"
   },
   "keywords": [
     "security",
@@ -50,7 +61,9 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "audit-ci": "^7.1.0",
     "concurrently": "^8.2.2",
+    "eslint": "^9.39.5",
     "netlify-cli": "^27.16.2",
     "typescript": "^6.0.3"
   },

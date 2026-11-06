@@ -47,7 +47,7 @@ const placeholder = "'nonce-PLACEHOLDER'";
 const newNonceValue = `'nonce-${nonce}'`;
 
 if (html.includes(placeholder)) {
-  html = html.replace(new RegExp(placeholder.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), newNonceValue);
+  html = html.replace(new RegExp(placeholder.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), newNonceValue);
   console.log('✅ Updated CSP meta tag.');
 } else {
   console.warn('⚠️ CSP placeholder not found.');
@@ -63,7 +63,7 @@ const cspDirectives = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",
-  "connect-src 'self' https://api.qrserver.com",
+  "connect-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

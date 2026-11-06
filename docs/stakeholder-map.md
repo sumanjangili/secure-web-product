@@ -4,12 +4,12 @@ Roles, responsibilities, and key deliverables for secure-web-product.
 
 | Role | Primary Responsibility | Key Deliverables | Contact |
 |------|------------------------|------------------|---------|
-| Product Manager | Vision, roadmap, regulatory alignment, KPI definition | Roadmap, Regulatory Matrix, Release Notes | pm@company.com |
-| Engineering Lead | Architecture, implementation, CI/CD pipelines | Secure code, automated tests, audit-log function | eng-lead@company.com |
-| UX Designer | Consent UI, accessibility, user-flow for data-rights | Mockups, usability test reports | ux@company.com |
-| Legal / Compliance | Review DPA, DPIA, audit-log retention policies | Legal sign-off, compliance checklist | legal@company.com |
-| Security Analyst | Threat modelling, pen-testing, incident response | Threat model doc, security scan reports | security@company.com |
-| Operations / DevOps | Netlify deployment, secret management, monitoring | CI/CD config, observability dashboards | devops@company.com |
+| Product Manager | Vision, roadmap, regulatory alignment, KPI definition | Roadmap, Regulatory Matrix, Release Notes | hello@indoscient.in |
+| Engineering Lead | Architecture, implementation, CI/CD pipelines | Secure code, automated tests, audit-log function | hello@indoscient.in |
+| UX Designer | Consent UI, accessibility, user-flow for data-rights | Mockups, usability test reports | hello@indoscient.in |
+| Legal / Compliance | Review DPA, DPIA, audit-log retention policies | Legal sign-off, compliance checklist | helllo@indoscient.in |
+| Security Analyst | Threat modelling, pen-testing, incident response | Threat model doc, security scan reports | helllo@indoscient.in |
+| Operations / DevOps | Netlify deployment, secret management, monitoring | CI/CD config, observability dashboards | helllo@indoscient.in |
 
 ## Escalation Paths
 
@@ -43,4 +43,4 @@ Roles, responsibilities, and key deliverables for secure-web-product.
 
 ---
 
-*Last Updated: 2026-04-17 | Owner: Product Manager*
+*Last Updated: 2026-11-06 | Owner: Product Manager*

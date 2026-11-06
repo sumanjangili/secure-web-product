@@ -41,10 +41,6 @@ function warn(...args: unknown[]) {
   console.warn('[SecureFetch]', ...args);
 }
 
-function error(...args: unknown[]) {
-  console.error('[SecureFetch]', ...args);
-}
-
 // --- Cookie Utilities ---
 
 /**
@@ -215,7 +211,7 @@ interface SecureFetchOptions extends RequestInit {
  * @returns Parsed JSON response
  * @throws ApiError with status code and error details
  */
-export async function secureFetchJson<T = any>(
+export async function secureFetchJson<T = unknown>(
   url: string,
   options: SecureFetchOptions = {}
 ): Promise<T> {
@@ -292,12 +288,16 @@ export async function secureFetchJson<T = any>(
     } catch (err) {
       lastError = err;
       
-      // Don't retry on certain errors
-      if (err instanceof ApiError && (err.status === 400 || err.status === 404 || err.status === 429)) {
+      // 401/403 are auth/CSRF failures — retrying cannot succeed and burns
+      // rate-limit budget (e.g., a wrong password counts 3× against lockout)
+      if (
+        err instanceof ApiError &&
+        (err.status === 400 || err.status === 401 || err.status === 403 ||
+         err.status === 404 || err.status === 429)
+      ) {
         debug('Skipping retry for client error:', err.status);
         break;
       }
-
       // Check if we should retry
       if (attempts <= MAX_RETRIES && retryOnTransientError) {
         debug('Retrying due to transient error...');
@@ -353,6 +353,29 @@ export class ApiError extends Error {
   }
 }
 
+// --- Error Message Extraction ---
+
+/**
+ * Safely extracts a human-readable message from an ApiError data payload.
+ *
+ * Why this exists: `err.data.error` is typed `unknown` (ApiError.data is
+ * Record<string, unknown>), so passing it straight to setError(string | null)
+ * or template literals fails type-checking. `String(msg)` is wrong — it turns
+ * `undefined` into the truthy string "undefined". This guard keeps the fix
+ * type-safe AND runtime-safe, in one place, forever.
+ *
+ * @param data - The `data` property of an ApiError (shape unknown)
+ * @param fallback - Message to use if no usable string is present
+ * @returns Extracted error message, or the fallback
+ */
+export function getErrorMessage(data: unknown, fallback = ''): string {
+  if (typeof data === 'object' && data !== null && 'error' in data) {
+    const err = (data as { error?: unknown }).error;
+    if (typeof err === 'string' && err) return err;
+  }
+  return fallback;
+}
+
 /**
  * Reads the response body and constructs a structured ApiError.
  * Handles non-JSON bodies gracefully.
@@ -397,7 +420,7 @@ async function buildApiError(
 /**
  * GET request wrapper. CSRF is skipped by default for read-only operations.
  */
-export function apiGet<T = any>(
+export function apiGet<T = unknown>(
   url: string,
   options?: Omit<SecureFetchOptions, 'skipCsrf'>
 ): Promise<T> {
@@ -407,7 +430,7 @@ export function apiGet<T = any>(
 /**
  * POST request wrapper. CSRF is enabled by default for state-changing operations.
  */
-export function apiPost<T = any>(
+export function apiPost<T = unknown>(
   url: string,
   body?: unknown,
   options?: Omit<SecureFetchOptions, 'skipCsrf' | 'body'>
@@ -423,7 +446,7 @@ export function apiPost<T = any>(
 /**
  * PUT request wrapper. CSRF is enabled by default.
  */
-export function apiPut<T = any>(
+export function apiPut<T = unknown>(
   url: string,
   body?: unknown,
   options?: Omit<SecureFetchOptions, 'skipCsrf' | 'body'>
@@ -439,7 +462,7 @@ export function apiPut<T = any>(
 /**
  * DELETE request wrapper. CSRF is enabled by default.
  */
-export function apiDelete<T = any>(
+export function apiDelete<T = unknown>(
   url: string,
   options?: Omit<SecureFetchOptions, 'skipCsrf'>
 ): Promise<T> {
@@ -514,7 +537,10 @@ export function checkAuthStatus(): { isAuthenticated: boolean; reason?: string }
   // Decode JWT payload to check expiration (client-side best effort)
   try {
     const payloadBase64 = jwtParts[1];
-    const payloadJson = atob(payloadBase64);
+    // JWT is base64url (RFC 7515); atob needs standard base64 with padding
+    const b64 = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const payloadJson = atob(padded);
     const payload = JSON.parse(payloadJson);
 
     // Check exp claim if present (Unix timestamp)

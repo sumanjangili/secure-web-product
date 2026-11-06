@@ -1,7 +1,7 @@
 // frontend/src/components/SecureForm.tsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { encrypt, decrypt } from "../lib/crypto";
-import { secureFetchJson, ApiError } from "../lib/fetch-helper";
+import { secureFetchJson, ApiError, getErrorMessage } from "../lib/fetch-helper";
 
 interface FormData {
   name: string;
@@ -137,7 +137,7 @@ const SecureForm: React.FC<SecureFormProps> = ({ sessionKey, onLogout }) => {
         if (error.status === 403) {
           setStatus("❌ Security check failed. Refresh the page and try again.");
         } else {
-          setStatus(`❌ Error: ${error.data?.error || error.message}`);
+          setStatus(`❌ Error: ${getErrorMessage(error.data, error.message)}`);
         }
       } else if (error instanceof Error) {
         setStatus(`❌ Error: ${error.message}`);

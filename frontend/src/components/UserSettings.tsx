@@ -1,7 +1,7 @@
 // frontend/src/components/UserSettings.tsx
 import React, { useState, useEffect, useCallback } from "react";
 import MFASetup from "./MFASetup";
-import { secureFetchJson } from "../lib/fetch-helper"; 
+import { secureFetchJson, ApiError, getErrorMessage } from "../lib/fetch-helper";
 
 interface UserSettingsProps {
   user: {
@@ -9,7 +9,6 @@ interface UserSettingsProps {
     mfaEnabled?: boolean;
     id: string;
   };
-  sessionKey?: string;
 }
 
 interface AuditLogEntry {
@@ -21,20 +20,20 @@ interface AuditLogEntry {
   user_id?: string;
 }
 
-const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
+const UserSettings: React.FC<UserSettingsProps> = ({ user }) => {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [showMFASetup, setShowMFASetup] = useState(!user.mfaEnabled);
   const [generatedCodes, setGeneratedCodes] = useState<string[] | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  
+
   // State for Audit Logs
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
-  // ✅ FIXED: Proper timeout instead of fragile cleanup effect
+  // ✅ Proper timeout instead of fragile cleanup effect
   useEffect(() => {
     if (!generatedCodes) return;
     const timer = setTimeout(() => setGeneratedCodes(null), 30_000);
@@ -46,18 +45,20 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     setMessage(null);
 
     try {
-      // ✅ FIXED: Use short path, removed redundant userId in body
       const data = await secureFetchJson<{ codes: string[] }>("/generate-backup-codes", {
         method: "POST",
       });
 
       setGeneratedCodes(data.codes);
       setMessage({ type: "success", text: "New backup codes generated! Save them now." });
-    } catch (error: any) {
-      setMessage({ 
-        type: "error", 
-        text: error.data?.error || (error instanceof Error ? error.message : "Failed to generate codes") 
-      });
+    } catch (error: unknown) {
+      const text =
+        error instanceof ApiError
+          ? getErrorMessage(error.data, error.message || "Failed to generate codes")
+          : error instanceof Error
+            ? error.message
+            : "Failed to generate codes";
+      setMessage({ type: "error", text });
     } finally {
       setGenerating(false);
     }
@@ -71,11 +72,12 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
       setLogs(data.logs);
       setShowLogs(true);
       setMessage({ type: "success", text: `Loaded ${data.count} recent log entries.` });
-    } catch (err: any) {
-      setMessage({ 
-        type: "error", 
-        text: err.data?.error || "Failed to load logs. You may not have permission." 
-      });
+    } catch (err: unknown) {
+      const text =
+        err instanceof ApiError
+          ? getErrorMessage(err.data, "Failed to load logs. You may not have permission.")
+          : "Failed to load logs. You may not have permission.";
+      setMessage({ type: "error", text });
     } finally {
       setLoadingLogs(false);
     }
@@ -93,33 +95,35 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
     try {
       await secureFetchJson("/delete-user", {
         method: "POST",
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           reason: "GDPR Right to Erasure",
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         }),
       });
 
       setMessage({ type: "success", text: "Your data has been permanently deleted." });
       window.location.href = "/login";
-
-    } catch (error: any) {
-      setMessage({ 
-        type: "error", 
-        text: error.data?.error || (error instanceof Error ? error.message : "An unexpected error occurred.") 
-      });
+    } catch (error: unknown) {
+      const text =
+        error instanceof ApiError
+          ? getErrorMessage(error.data, error.message || "An unexpected error occurred.")
+          : error instanceof Error
+            ? error.message
+            : "An unexpected error occurred.";
+      setMessage({ type: "error", text });
     } finally {
       setDeleting(false);
       setConfirming(false);
     }
   };
 
-  // ✅ FIXED: Move message to TOP so it's visible everywhere
+  // ✅ Message displayed at TOP so it's visible everywhere
   const MessageDisplay = () => {
     if (!message) return null;
     return (
-      <div style={{ 
-        padding: "0.75rem", 
-        marginBottom: "1rem", 
+      <div style={{
+        padding: "0.75rem",
+        marginBottom: "1rem",
         borderRadius: "4px",
         backgroundColor: message.type === "error" ? "#ffebee" : "#e8f5e9",
         color: message.type === "error" ? "#c62828" : "#2e7d32"
@@ -157,33 +161,32 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
   return (
     <div style={{ maxWidth: "600px", margin: "2rem auto", padding: "1rem", border: "1px solid #ddd", borderRadius: "8px" }}>
       <h2>Account Management</h2>
-      
-      {/* ✅ FIXED: Message rendered at TOP of component */}
+
       <MessageDisplay />
-      
+
       {/* SECTION 1: Security Status & MFA Setup */}
       <div style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #ddd", borderRadius: "4px", backgroundColor: "#fafafa" }}>
         <h3 style={{ marginTop: 0, marginBottom: "1rem", color: "#333" }}>Security Status</h3>
-        
+
         {user.needsNewBackupCodes && (
-          <div style={{ 
-            padding: "0.75rem", 
-            marginBottom: "1rem", 
-            backgroundColor: "#fff3cd", 
+          <div style={{
+            padding: "0.75rem",
+            marginBottom: "1rem",
+            backgroundColor: "#fff3cd",
             color: "#856404",
             borderRadius: "4px",
             border: "1px solid #ffeeba"
           }}>
-            <strong>⚠️ Action Required:</strong> You've used all your backup codes. 
+            <strong>⚠️ Action Required:</strong> You've used all your backup codes.
             Please generate new ones below.
           </div>
         )}
 
         {generatedCodes && (
-          <div style={{ 
-            padding: "1rem", 
-            marginBottom: "1rem", 
-            backgroundColor: "#e8f5e9", 
+          <div style={{
+            padding: "1rem",
+            marginBottom: "1rem",
+            backgroundColor: "#e8f5e9",
             color: "#2e7d32",
             borderRadius: "4px",
             border: "1px solid #a5d6a7"
@@ -198,23 +201,23 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
 
         <div style={{ marginBottom: "1.5rem", padding: "1rem", border: "1px solid #e0e0e0", borderRadius: "4px" }}>
           <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Two-Factor Authentication (2FA)</h4>
-          
+
           {showMFASetup ? (
             <>
               <p style={{ fontSize: "0.9rem", color: "#555", marginBottom: "1rem" }}>
                 Protect your account by enabling Two-Factor Authentication.
               </p>
-              <MFASetup 
+              <MFASetup
                 onSuccess={() => {
                   setShowMFASetup(false);
                   setMessage({ type: "success", text: "MFA Enabled Successfully!" });
-                }} 
+                }}
               />
             </>
           ) : (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ color: "green", fontWeight: "bold" }}>✅ MFA is Enabled</span>
-              <button 
+              <button
                 style={{ ...primaryButtonStyle, backgroundColor: "#6c757d", fontSize: "0.8rem", padding: "0.5rem 1rem" }}
                 onClick={() => setShowMFASetup(true)}
               >
@@ -224,15 +227,13 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
           )}
         </div>
 
-        <button 
+        <button
           onClick={handleManageBackupCodes}
           style={primaryButtonStyle}
           disabled={generating}
         >
           {generating ? (
-            <>
-              <span style={{ marginRight: "0.5rem" }}>⏳ Generating...</span>
-            </>
+            <span style={{ marginRight: "0.5rem" }}>⏳ Generating...</span>
           ) : (
             "Generate New Backup Codes"
           )}
@@ -243,15 +244,15 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
       <div style={{ marginTop: "2rem", padding: "1rem", border: "1px solid #ddd", borderRadius: "4px", backgroundColor: "#f9f9f9" }}>
         <h3 style={{ marginTop: 0, marginBottom: "0.5rem", color: "#333" }}>System Audit Logs</h3>
         <p style={{ fontSize: "0.9rem", color: "#666", marginBottom: "1rem" }}>
-          View recent security events (Login, Logout, Data Saves). 
-          <br/><em>Note: Admins see all logs; regular users see only their own.</em>
+          View recent security events (Login, Logout, Data Saves).
+          <br /><em>Note: Admins see all logs; regular users see only their own.</em>
         </p>
-        
-        <button 
+
+        <button
           onClick={handleFetchLogs}
           disabled={loadingLogs}
-          style={{ 
-            ...primaryButtonStyle, 
+          style={{
+            ...primaryButtonStyle,
             backgroundColor: loadingLogs ? "#93c5fd" : "#6c757d",
             width: "auto",
             marginRight: "1rem"
@@ -300,7 +301,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
         <p>Once you delete your account, there is no going back. Please be certain.</p>
 
         {!confirming ? (
-          <button 
+          <button
             onClick={() => setConfirming(true)}
             style={dangerButtonStyle}
           >
@@ -309,9 +310,9 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
         ) : (
           <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
             <span>Are you sure?</span>
-            <button 
+            <button
               onClick={handleDeleteRequest}
-              disabled={deleting} 
+              disabled={deleting}
               style={{
                 backgroundColor: deleting ? "#999" : "#d32f2f",
                 color: "white",
@@ -325,7 +326,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ user, sessionKey }) => {
             >
               {deleting ? "Processing..." : "Yes, Delete Everything"}
             </button>
-            <button 
+            <button
               onClick={() => setConfirming(false)}
               disabled={deleting}
               style={{

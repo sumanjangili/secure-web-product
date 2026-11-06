@@ -1,10 +1,11 @@
-// src/hooks/useAnalytics.ts
+// frontend/src/hooks/useAnalytics.ts
 import { useEffect, useCallback, useState, useRef } from "react";
 import { ConsentManager } from "../lib/consent-manager";
 
 declare global {
   interface Window {
-    gtag?: (command: string, eventName: string, params?: Record<string, any>) => void;
+    /** Signature kept permissive — gtag's own typing varies by consent mode. */
+    gtag?: (...args: unknown[]) => void;
   }
 }
 
@@ -21,13 +22,13 @@ export const useAnalytics = () => {
     if (consentCheckRef.current) {
       return;
     }
-    
+
     consentCheckRef.current = true;
-    
+
     try {
       const allowed = await ConsentManager.isAllowed("analytics");
       setIsTracking(allowed);
-      
+
       if (import.meta.env.VITE_SECURE_FETCH_DEBUG === "true") {
         console.log(`[Analytics] Consent: ${allowed ? 'granted' : 'denied'}`);
       }
@@ -64,7 +65,7 @@ export const useAnalytics = () => {
         if (!/^[a-zA-Z0-9_]+$/.test(key)) {
           return;
         }
-        
+
         const val = properties[key];
         if (typeof val === 'string') {
           const sanitized = val.substring(0, 500).replace(/[<>]/g, '');
