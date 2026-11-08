@@ -1,0 +1,17 @@
+// netlify/functions/tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "useUnknownInCatchVariables": false,
+    "noImplicitAny": false,
+    "strict": false
+  },
+  "include": ["**/*.js"]
+}

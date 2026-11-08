@@ -2,7 +2,6 @@
   command = """
     cd frontend &&
     npm ci &&
-    npx tsc --ignoreDeprecations 5.0 &&
     npm run build
   """
   publish = "frontend/dist"
@@ -15,14 +14,18 @@
 
   # Ignore specific environment variable names that are not secrets
   SECRETS_SCAN_OMIT_KEYS = "NODE_ENV,NODE_VERSION,CI,GITHUB_ACTIONS,NETLIFY"
-  
+
   # Ignore paths containing .env files (ensure they are gitignored anyway)
   SECRETS_SCAN_OMIT_PATHS = ".env*,**/.env*,frontend/.env*"
 
 [dev]
-  framework = "vite"
-  port = 9999
-  targetPort = 5173
+  # Single-process dev: Netlify proxies BOTH the Vite frontend and the functions.
+  # `framework = "vite"` with no command made netlify dev run bare `vite` at the
+  # repo root, where vite is not installed — hence "Failed running command: vite".
+  command = "npm run dev:frontend"
+  framework = "#custom"
+  port = 9999          # the single URL used in the browser
+  targetPort = 5173    # the Vite server Netlify proxies to
   autoLaunch = false
 
 [[plugins]]

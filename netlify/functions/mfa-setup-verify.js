@@ -1,5 +1,5 @@
 // netlify/functions/mfa-setup-verify.js
-const { authenticator } = require('otplib');
+const { verify } = require('otplib');
 const { Pool } = require('pg');
 const argon2 = require('argon2');
 const crypto = require('crypto');
@@ -7,14 +7,15 @@ const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { validateCsrf } = require('./_middleware/csrf-check');
 
-// Set options once globally
-authenticator.options = { window: 1 };
-
 // --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const MAX_MFA_VERIFY_ATTEMPTS = 5;
 const LOCKOUT_TIME_SECONDS = 15 * 60; // 15 minutes
 const BACKUP_CODE_COUNT = 10;
+
+// ±30s clock-drift allowance for TOTP verification (≈ the old window:1
+// from otplib v12; v13 expresses tolerance in seconds, not steps).
+const EPOCH_TOLERANCE_SECONDS = 30;
 
 // Initialize Pool with SSL for Neon/Cloud Postgres
 const pool = new Pool({
@@ -73,9 +74,8 @@ exports.handler = async (event, context) => {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid code format. Expected 6 digits.' }) };
   }
 
-  // 5. ✅ FIX: Rate limiting — was completely missing, making the 6-digit
-  // TOTP brute-forceable (~1M combinations, 3 valid per window with window:1).
-  // Mirrors verify-mfa.js: 5 attempts per 15 minutes, atomic via checkRateLimit.
+  // 5. Rate limiting — protects the 6-digit TOTP from brute force.
+  // 5 attempts per 15 minutes, atomic via checkRateLimit (mirrors verify-mfa.js).
   const rateKey = `mfa_setup_verify:${userId}`;
 
   let rateLimitResult;
@@ -115,10 +115,14 @@ exports.handler = async (event, context) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'MFA not initiated. Please run the init step first.' }) };
     }
 
-    // 7. Verify TOTP Code
-    const isValid = authenticator.check(code, user.mfa_secret);
+    // 7. Verify TOTP Code (otplib v13: async, returns { valid, delta })
+    const result = await verify({
+      secret: user.mfa_secret,
+      token: code,
+      epochTolerance: [EPOCH_TOLERANCE_SECONDS, EPOCH_TOLERANCE_SECONDS],
+    });
 
-    if (!isValid) {
+    if (!result.valid) {
       // Rate limit already incremented by checkRateLimit — no manual increment needed
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid code. Please try again.' }) };
     }
@@ -128,9 +132,8 @@ exports.handler = async (event, context) => {
     const backupCodeHashes = [];
 
     for (let i = 0; i < BACKUP_CODE_COUNT; i++) {
-      // ✅ COMMENT FIX: 6 random bytes as hex = 12 HEX characters (0-9, A-F),
-      // NOT full alphanumeric. Entropy is 48 bits — strength is fine.
-      // The frontend's [A-Z0-9]{12} validator is a superset, so still compatible.
+      // 6 random bytes as hex = 12 HEX characters (0-9, A-F).
+      // Entropy is 48 bits; Argon2-hashed at rest.
       const codeStr = crypto.randomBytes(6).toString('hex').toUpperCase();
       backupCodes.push(codeStr);
 
@@ -138,8 +141,7 @@ exports.handler = async (event, context) => {
       backupCodeHashes.push(hash);
     }
 
-    // 9. ✅ FIX: Transaction — the UPDATE and audit INSERT are now atomic.
-    // Previously a crash between them enabled MFA without any audit record.
+    // 9. Transaction — the UPDATE and audit INSERT are atomic.
     await client.query('BEGIN');
 
     try {
@@ -176,7 +178,7 @@ exports.handler = async (event, context) => {
       throw dbError;
     }
 
-    // 10. ✅ FIX: Reset rate limit on success
+    // 10. Reset rate limit on success
     try {
       await redis.resetRateLimit(rateKey);
     } catch (redisErr) {

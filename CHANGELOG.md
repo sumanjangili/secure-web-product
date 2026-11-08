@@ -10,10 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Privacy Policy — GDPR Art. 5(1)(e) Retention Caps**: Defined storage-limitation commitments:
+  24-month account-inactivity deletion window, 30-day erasure-completion deadline, 30-day
+  encrypted-backup rotation window, 30-day IP-address retention cap, and 12-month
+  audit-log retention followed by anonymization (`ON DELETE SET NULL`). Storage limitation
+  was previously unspecified ("retained indefinitely"), creating compliance exposure under
+  GDPR Art. 5(1)(e) and CCPA §1798.100(c).
+- **Privacy Policy — Right to Erasure Mechanics**: Documented the password-re-authentication
+  and typed-confirmation-phrase requirements, session/CSRF cookie invalidation via the cookie
+  parity contract, and anonymized survival of audit records after account deletion.
 
 ### Changed
+- **Privacy Policy — Zero-Knowledge Scope Corrected**: Scoped the zero-knowledge claim to
+  `secure_data` (form submissions encrypted client-side, AES-GCM 256 + PBKDF2 100k via
+  native Web Crypto). The prior blanket claim — covering "names, emails, messages, consent
+  preferences" — overstated coverage: email addresses are processed in cleartext for
+  authentication, and consent is persisted as plain booleans.
+- **Privacy Policy — Password Handling Clarified**: Removed the false "we never receive your
+  password" claim. The login password is transmitted over TLS and hashed server-side with
+  Argon2id; only the *encryption* password remains client-only and is wiped from React
+  state on every exit path. The two credentials are now distinguished explicitly (§2, §3.A).
+- **Privacy Policy — Consent Storage Accurately Described**: Server-side consent records
+  are now documented as unencrypted plain booleans in an append-only `consent_records` table
+  (newest-record-wins reads), replacing the removed "encrypted, immutable, tamper-proof
+  consent record" claim that did not match `save-consent.js`.
+- **Privacy Policy — MFA Data Disclosure (§3.D)**: Added disclosure of TOTP secret storage
+  and ten one-time-use backup codes (12 hex chars, Argon2-hashed at rest, regeneratable),
+  required for accurate GDPR transparency under Art. 13/14.
+- **Privacy Policy — Security Section Synced to Code (§8)**: All documented controls now
+  reflect actual implementation: CSRF double-submit on mutations, atomic Redis rate limiting
+  with pre-auth `/login` limiter and `Retry-After` signalling, `requireMFAIfEnrolled` /
+  `mfaVerified` claim enforcement, cookie-parity contract, audit-event `CHECK` constraint,
+  and enhanced CSP headers. Removed unverifiable claims; consistent with the v1.2.0
+  documentation-integrity fix.
+- **Privacy Policy — International Transfers Rewritten (§7)**: E2EE protection now correctly
+  scoped to `secure_data` only; non-encrypted metadata transport over TLS 1.3 and SCC
+  reliance disclosed accurately.
 
 ### Fixed
+- **Privacy Policy — Typos and Placeholders**: Restored correct controller contact email with physical address
+  (`info@indoscient.in` and `Telangana State, India`);
 
 ### Removed
 

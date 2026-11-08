@@ -289,12 +289,23 @@ async function resetRateLimit(key) {
 }
 
 // --- Exports ---------------------------------------------------------------
-// The client is exported directly to preserve the existing call sites
+// The client is exported directly to preserve existing call sites
 // (`const redis = require('./lib/redis')` then `redis.get(...)`).
-// Helpers are attached alongside it, which keeps this a non-breaking change.
-redisClient.isMockMode = isMockMode;
-redisClient.checkRateLimit = checkRateLimit;
-redisClient.resetRateLimit = resetRateLimit;
-redisClient.RATE_LIMIT_SCRIPT = RATE_LIMIT_SCRIPT;
+// Helpers are attached alongside it — non-breaking; typed via HybridRedis.
 
-module.exports = redisClient;
+/** @typedef {import('@upstash/redis').Redis & {
+ *   isMockMode: boolean,
+ *   checkRateLimit: (key: string, maxAttempts: number, windowSeconds: number) =>
+ *     Promise<{ allowed: boolean, count: number, ttl: number }>,
+ *   resetRateLimit: (key: string) => Promise<void>,
+ *   RATE_LIMIT_SCRIPT: string
+ * }} HybridRedis */
+
+const hybridClient = /** @type {HybridRedis} */ (redisClient);
+
+hybridClient.isMockMode = isMockMode;
+hybridClient.checkRateLimit = checkRateLimit;
+hybridClient.resetRateLimit = resetRateLimit;
+hybridClient.RATE_LIMIT_SCRIPT = RATE_LIMIT_SCRIPT;
+
+module.exports = hybridClient;

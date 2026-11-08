@@ -2,89 +2,102 @@ name: Update VERIFY_CHECKLIST
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [main]
+    paths-ignore:
+      - 'VERIFY_CHECKLIST.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-checklist
+  cancel-in-progress: false
 
 jobs:
   update-checklist:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            netlify/functions/package-lock.json
 
-      # Install in frontend dir explicitly — don't use global working-directory
-      - name: Install Dependencies
-        run: cd frontend && npm ci
+      - name: Install dependencies (root)
+        run: npm ci
+      - name: Install dependencies (frontend)
+        run: npm ci --prefix frontend
+      - name: Install dependencies (functions)
+        run: npm ci --prefix netlify/functions
 
-      - name: Run Lint & Tests
-        id: lint_test
-        run: |
-          cd frontend
-          npm run lint && npm run test
-          echo "status=success" >> "$GITHUB_OUTPUT"
+      # Re-run the SAME gate as CI; continue-on-error lets us record
+      # failures honestly in the checklist instead of dying.
+      - name: Gate — lint, type-check, tests
+        id: gate_lint_tests
         continue-on-error: true
+        run: npm run lint && npm run type-check && npm run test
 
-      - name: Run Security Audit
-        id: audit
-        run: |
-          cd frontend
-          npm audit --production --audit-level=high
-          echo "status=success" >> "$GITHUB_OUTPUT"
+      - name: Gate — dependency audit (moderate)
+        id: gate_audit
         continue-on-error: true
+        run: npm run audit
 
-      # Now operate on VERIFY_CHECKLIST.md at REPO ROOT (correct location)
-      - name: Prepare Checklist File
-        id: prep
+      - name: Update VERIFY_CHECKLIST.md
+        env:
+          GATE_LINT_TESTS: ${{ steps.gate_lint_tests.outcome }}
+          GATE_AUDIT: ${{ steps.gate_audit.outcome }}
         run: |
-          CHECKLIST_FILE="VERIFY_CHECKLIST.md"
-          
-          if [ ! -f "$CHECKLIST_FILE" ]; then
-            cat > "$CHECKLIST_FILE" << 'CLDEOF'
-          # Verification & Smoke-Test Checklist
-          > **Auto-updated by CI**
-          
-          - [ ] <!-- Lint & tests passed -->
-          - [ ] <!-- npm audit clean -->
-          - [ ] <!-- MFA flow verified -->
-          - [ ] <!-- Account erasure verified -->
-          CLDEOF
-          fi
-          
-          echo "file_content<<EOF" >> "$GITHUB_OUTPUT"
-          cat "$CHECKLIST_FILE"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import datetime, os, pathlib, re
 
-      - name: Update Checklist Content
-        run: |
-          CHECKLIST_FILE="VERIFY_CHECKLIST.md"
-          CONTENT="${{ steps.prep.outputs.file_content }}"
-          
-          # Use .outcome instead of .status
-          if [[ "${{ steps.lint_test.outcome }}" == "success" ]]; then
-            CONTENT=$(echo "$CONTENT" | sed 's/- \[ \] <!-- Lint & tests passed -->/- [x] <!-- Lint & tests passed -->/')
-          else
-            CONTENT=$(echo "$CONTENT" | sed 's/- \[x\] <!-- Lint & tests passed -->/- [ ] <!-- Lint & tests passed -->/')
-          fi
-          
-          if [[ "${{ steps.audit.outcome }}" == "success" ]]; then
-            CONTENT=$(echo "$CONTENT" | sed 's/- \[ \] <!-- npm audit clean -->/- [x] <!-- npm audit clean -->/')
-          else
-            CONTENT=$(echo "$CONTENT" | sed 's/- \[x\] <!-- npm audit clean -->/- [ ] <!-- npm audit clean -->/')
-          fi
-          
-          echo "$CONTENT" > "$CHECKLIST_FILE"
+          stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+          outcomes = {
+              "lint-tests": os.environ.get("GATE_LINT_TESTS", ""),
+              "audit": os.environ.get("GATE_AUDIT", ""),
+          }
 
-      - name: Commit and Push Changes
+          path = pathlib.Path("VERIFY_CHECKLIST.md")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          changed = 0
+
+          for i, line in enumerate(lines):
+              m = re.search(r"<!--\s*gate:(lint-tests|audit)\b", line)
+              if not m:
+                  continue
+              key = m.group(1)
+              ok = outcomes.get(key) == "success"
+              box = "[x]" if ok else "[ ]"
+              verb = "passed" if ok else "FAILED"
+              lines[i] = re.sub(
+                  r"- \[[ x]\]\s*<!--\s*gate:.*?-->",
+                  f"- [{box}] <!-- gate:{key} · {verb} {stamp} -->",
+                  line,
+                  count=1,
+              )
+              changed += 1
+
+          if changed == 0:
+              raise SystemExit(
+                  "No gate rows found — expected '<!-- gate:lint-tests -->' and "
+                  "'<!-- gate:audit -->' anchors in VERIFY_CHECKLIST.md"
+              )
+
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"Updated {changed} gate rows: {outcomes}")
+          PY
+
+      - name: Commit and push checklist
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🤖 Auto-update VERIFY_CHECKLIST: Lint=${{ steps.lint_test.outcome }}, Audit=${{ steps.audit.outcome }}"
+          commit_message: "chore(checklist): auto-update gate rows [skip ci]"
           file_pattern: VERIFY_CHECKLIST.md

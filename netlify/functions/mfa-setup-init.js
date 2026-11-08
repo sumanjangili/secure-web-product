@@ -1,18 +1,16 @@
 // netlify/functions/mfa-setup-init.js
-const { authenticator } = require('otplib');
+const { generateSecret } = require('otplib');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { validateCsrf } = require('./_middleware/csrf-check');
 const { requireMFAIfEnrolled } = require('./_middleware/require-mfa');
 
-// Set options once globally
-authenticator.options = { window: 1 };
-
 // --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const MAX_INIT_PER_HOUR = 10; // Secret regeneration is a rare, deliberate act
 const RATE_LIMIT_WINDOW = 3600; // 1 hour
+const EPOCH_TOLERANCE_SECONDS = 30;
 
 // --- Allowed Origins Configuration ---
 const ALLOWED_ORIGINS = [
@@ -135,7 +133,7 @@ exports.handler = async (event, context) => {
     const user = userResult.rows[0];
     const isRotation = user.mfa_enabled === true;
 
-    // ✅ CONDITIONAL gate (MFA is optional):
+    // CONDITIONAL gate (MFA is optional):
     // - First-time enrollment: user holds a pre-MFA token by definition —
     //   demanding mfaVerified here created a deadlock where NOBODY could
     //   ever enable MFA. Enrollment stays open.
@@ -147,7 +145,7 @@ exports.handler = async (event, context) => {
     if (mfaError) return mfaError;
 
     // 7. Generate MFA Secret
-    const secret = authenticator.generateSecret();
+    const secret = generateSecret();
 
     // 8. User-specific otpauth URI (RFC 6238 issuer:account)
     const issuer = 'SecureProduct';
@@ -168,7 +166,7 @@ exports.handler = async (event, context) => {
       method: 'totp',
     };
 
-    // ✅ FIX: Transaction — the audit INSERT and the secret UPDATE are now
+    // FIX: Transaction — the audit INSERT and the secret UPDATE are now
     // atomic. Previously a crash between them produced an audit record with
     // no matching secret rotation (or vice versa).
     await client.query('BEGIN');

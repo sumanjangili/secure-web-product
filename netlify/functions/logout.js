@@ -61,8 +61,8 @@ function jsonResponse(statusCode, data, extraHeaders = {}) {
  * If login sets Domain=.indoscient.in, logout must also set it, otherwise
  * the browser treats them as different cookies and deletion fails.
  * 
- * @param {string} name      Cookie name
- * @param {boolean} httpOnly Whether the original cookie was HttpOnly
+ * @param {string} name Cookie name
+ * @param {{ httpOnly: boolean}} opts Attributes mirrored from the login Set-Cookie
  */
 function buildDeletionCookies(name, { httpOnly }) {
   const isProd = isProduction();
@@ -79,7 +79,7 @@ function buildDeletionCookies(name, { httpOnly }) {
   // Mirror SameSite mode from login (None in prod, Lax in dev)
   attrs.push(`SameSite=${isProd ? 'None' : 'Lax'}`);
 
-  // ✅ CRITICAL FIX: ADD Domain to match login.js exactly!
+  // CRITICAL FIX: ADD Domain to match login.js exactly!
   // Without this, cookies set with Domain=.indoscient.in CANNOT be deleted.
   if (isProd) {
     attrs.push('Domain=.indoscient.in');

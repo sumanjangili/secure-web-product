@@ -1,19 +1,20 @@
 // netlify/functions/verify-mfa.js
-const { authenticator } = require('otplib');
+const { verify } = require('otplib');
 const { Pool } = require('pg');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { validateCsrf } = require('./_middleware/csrf-check');
 
-// Set options once globally
-authenticator.options = { window: 1 };
-
 // --- Configuration ---
 const dbUrl = process.env.DATABASE_URL;
 const MAX_MFA_ATTEMPTS = 5;
 const LOCKOUT_TIME_SECONDS = 15 * 60; // 15 minutes
 const SESSION_DURATION = 86400; // 24 hours
+
+// ±30s clock-drift allowance for TOTP verification (≈ the old window:1
+// from otplib v12; v13 expresses tolerance in seconds, not steps).
+const EPOCH_TOLERANCE_SECONDS = 30;
 
 // --- Allowed Origins Configuration ---
 const ALLOWED_ORIGINS = [
@@ -148,6 +149,15 @@ exports.handler = async (event, context) => {
     return jsonResponse(400, { error: 'Missing required fields (code and method)' });
   }
 
+  // Format-guard: reject malformed input before it consumes a rate-limit attempt
+  if (method === 'totp' && (!mfaCode || typeof mfaCode !== 'string' || !/^\d{6}$/.test(mfaCode))) {
+    return jsonResponse(400, { error: 'Invalid code format. Expected 6 digits.' });
+  }
+
+  if (method === 'backup' && (!backupCode || typeof backupCode !== 'string')) {
+    return jsonResponse(400, { error: 'Invalid backup code format.' });
+  }
+
   const client = await pool.connect();
   try {
     // 5. Fetch User Data
@@ -194,7 +204,7 @@ exports.handler = async (event, context) => {
       });
     }
 
-    // 7. Verify Code
+    // 7. Verify Code (otplib v13: async, returns { valid, delta })
     let isValid = false;
     let matchedHashIndex = -1;
 
@@ -202,7 +212,12 @@ exports.handler = async (event, context) => {
       if (!user.mfa_secret) {
         return jsonResponse(400, { error: 'MFA not configured for this user' });
       }
-      isValid = authenticator.check(mfaCode, user.mfa_secret);
+      const totpResult = await verify({
+        secret: user.mfa_secret,
+        token: mfaCode,
+        epochTolerance: [EPOCH_TOLERANCE_SECONDS, EPOCH_TOLERANCE_SECONDS],
+      });
+      isValid = totpResult.valid;
     } else if (method === 'backup') {
       const storedHashes = user.backup_code_hashes || [];
       for (let i = 0; i < storedHashes.length; i++) {

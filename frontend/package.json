@@ -1,5 +1,5 @@
 {
-  "name": "@sumanjangili/secure-web-product",
+  "name": "@sumanjangili/app-indoscient-frontend",
   "version": "1.2.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
   "bugs": {
     "url": "https://github.com/sumanjangili/secure-web-product/issues"
   },
-  "homepage": "https://github.com/sumanjangili/secure-web-product",
+  "homepage": "https://app.indoscient.in",
   "keywords": [
     "vite",
     "react",

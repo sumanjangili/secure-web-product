@@ -1,12 +1,23 @@
 {
-  "name": "secure-web-functions",
+  "name": "@sumanjangili/app-indoscient-functions",
   "version": "1.2.0",
   "private": true,
+  "description": "Serverless functions for app.indoscient: MFA, auth, audit logging.",
   "dependencies": {
     "argon2": "^0.44.0",
-    "@upstash/redis": "^1.37.0",
+    "@upstash/redis": "^1.41.0",
     "jsonwebtoken": "^9.0.3",
-    "otplib": "^13.4.0",
-    "pg": "^8.20.0"
-  }
+    "otplib": "^13.6.0",
+    "pg": "^8.23.1"
+  },
+  "author": "Suman Jangili",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sumanjangili/secure-web-product.git"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2"
+  },
+  "homepage": "https://app.indoscient.in"
 }
