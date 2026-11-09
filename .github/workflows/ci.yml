@@ -26,7 +26,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth:0
+          fetch-depth: 0
 
       # ---------- Node setup (engines: >=22.0.0, stack targets >=22.13.0) ----------
       - name: Set up Node.js 22
@@ -84,8 +84,8 @@ jobs:
 
       # ---------- Deploy preview ----------
       - name: Deploy to Netlify (preview)
-        if: github.event_name == 'pull_request'
-        uses: nwtgck/actions-netlify@v2
+        if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+        uses: nwtgck/actions-netlify@v4.0.0
         with:
           publish-dir: ./frontend/dist
           production-deploy: false
