@@ -78,7 +78,7 @@ jobs:
                   continue
               key = m.group(1)
               ok = outcomes.get(key) == "success"
-              box = "[x]" if ok else "[ ]"
+              box = "x" if ok else " "
               verb = "passed" if ok else "FAILED"
               lines[i] = re.sub(
                   r"- \[[ x]\]\s*<!--\s*gate:.*?-->",
