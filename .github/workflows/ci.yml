@@ -52,11 +52,12 @@ jobs:
         run: |
           echo "Checking required scripts in ROOT package.json..."
           for script in lint type-check test build audit; do
-            if ! npm run --silent | grep -qw "${script}"; then
+            val=$(node -p "require('./package.json').scripts?.['${script}'] ?? ''")
+            if [ -z "$val" ]; then
               echo "::error::Missing npm script: '${script}' in root package.json"
               exit 1
             fi
-            echo "✅ Found script: ${script}"
+            echo "✅ ${script} -> ${val}"
           done
 
       # ---------- The gate: mirrors the verified local run exactly ----------

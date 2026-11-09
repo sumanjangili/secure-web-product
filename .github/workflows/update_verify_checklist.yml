@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with: 
+          token: ${{ secrets.CHECKLIST_TOKEN }}
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v4
@@ -98,6 +100,8 @@ jobs:
 
       - name: Commit and push checklist
         uses: stefanzweifel/git-auto-commit-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.CHECKLIST_TOKEN }}
         with:
           commit_message: "chore(checklist): auto-update gate rows [skip ci]"
           file_pattern: VERIFY_CHECKLIST.md
