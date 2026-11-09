@@ -13,8 +13,8 @@ This document tracks the verification steps for the current change set (**releas
 |---|------|--------|
 | 1 | Repo structure reviewed | - [ ] |
 | 2 | CI pipeline passes on a fresh branch | - [ ] *(v1.2.0 push CI failed — re-verify after corrected `ci.yml` is green)* |
-| 3 | Lint, type-check, and tests all green | **auto** - [ ] <!-- gate:lint-tests · pending --> |
-| 4 | No vulnerable dependencies (audit gate, moderate) | **auto** - [ ] <!-- gate:audit · pending --> |
+| 3 | Lint, type-check, and tests all green | **auto** - [[x]] <!-- gate:lint-tests · passed 2026-11-09 09:48 UTC --> |
+| 4 | No vulnerable dependencies (audit gate, moderate) | **auto** - [[x]] <!-- gate:audit · passed 2026-11-09 09:48 UTC --> |
 | 5 | Secret scanning clean | - [ ] *(automated in `ci.yml` via Gitleaks — tick after first green run)* |
 | 6 | Docs up-to-date and include contribution steps | - [ ] |
 | 7 | Production build succeeds and deploys to a staging URL | - [ ] |
