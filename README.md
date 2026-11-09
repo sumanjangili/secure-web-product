@@ -78,7 +78,7 @@ This repository serves as both a **functional secure application** and a **produ
 ### Getting Started Locally
 
 #### Prerequisites
-- **Node.js 20+** (Required for CI and local development).
+- **Node.js 22.13.0+** (Required for CI and local development).
 - **PostgreSQL** (Local or Cloud).
 - **Redis** (Optional for local dev; Upstash used in production).
 - **Netlify CLI** (Optional, for local function testing).
@@ -89,6 +89,7 @@ This repository serves as both a **functional secure application** and a **produ
 # 1. Clone the repository
 git clone https://github.com/sumanjangili/secure-web-product.git
 cd secure-web-product
+npm ci
 
 # 2. Install Frontend Dependencies
 cd frontend
@@ -101,18 +102,19 @@ cd ../..
 ```
 
 #### Local Development
-You must run two servers simultaneously:
 
+Single-process dev: Netlify proxies BOTH the Vite frontend and the functions.
 ```bash
-Terminal 1: Frontend (Vite)
-cd frontend
-npm run dev
-# Runs on http://localhost:5173
-
-Terminal 2: Backend (Netlify Functions)
+netlify dev
+# one server on 9999, Vite proxied at 5173 internally, functions live
 # Ensure your .env file is in the root directory
-netlify functions:serve
-# Runs on http://localhost:9999
+```
+
+#### Full local CI, end to end
+```bash
+npm run lint && npm run type-check && npm run test && npm run build && npm run audit
+# Green locally = high confidence CI passes, since CI now runs the identical composites on Node 22.
+# Commit & Push then watch on fully-green CI: tick checklist rows 2 and 5 with the run link, and rows 3–4 will auto-flip on the next push to main. The remaining rows 1, 6, 7, 8, 9, 10  — tick each one after when actually done the verification.
 ```
 
 ---
