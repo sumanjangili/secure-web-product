@@ -17,8 +17,8 @@ This document tracks the verification steps for the current change set (**releas
 | 4 | No vulnerable dependencies (audit gate, moderate) | **auto** - [x] <!-- gate:audit · passed 2026-11-10 14:33 UTC --> |
 | 5 | Secret scanning clean | - [x] *(Gitleaks clean in CI run 42596127779, 2026-11-09)* |
 | 6 | Docs up-to-date and include contribution steps | - [x] *(README updated with setup + contribution steps, 2026-11-09)* |
-| 7 | Production build succeeds and deploys to a staging URL | - [ ] |
-| 8 | Netlify function behaves as expected | - [ ] |
+| 7 | Production build succeeds and deploys to a staging URL | - [x] *(deployed to https://app.indoscient.in, 2026-11-10; login flow verified in browser incl. MFA challenge and save-secure-data)* |
+| 8 | Netlify function behaves as expected | - [x] *(curl smoke test on live URL: get-user-profile → 401 expected unauthenticated; full login verified via browser, 2026-11-10)* |
 | 9 | Branch protection & permissions verified | - [x] *(ruleset active: PR required, ci.yml status check enforced; admin bypass documented)* |
 | 10 | All reviewers sign-off | - [x] *(maintainer sign-off, 2026-11-09)* |
 
