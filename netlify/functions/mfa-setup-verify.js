@@ -1,6 +1,6 @@
 // netlify/functions/mfa-setup-verify.js
+const { pool } = require('./lib/db');
 const { verify } = require('otplib');
-const { Pool } = require('pg');
 const argon2 = require('argon2');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -16,14 +16,6 @@ const BACKUP_CODE_COUNT = 10;
 // ±30s clock-drift allowance for TOTP verification (≈ the old window:1
 // from otplib v12; v13 expresses tolerance in seconds, not steps).
 const EPOCH_TOLERANCE_SECONDS = 30;
-
-// Initialize Pool with SSL for Neon/Cloud Postgres
-const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false
-});
 
 exports.handler = async (event, context) => {
   // 1. Method Check
@@ -104,7 +96,7 @@ exports.handler = async (event, context) => {
   const client = await pool.connect();
   try {
     // 6. Fetch User MFA Secret
-    const userResult = await client.query('SELECT mfa_secret FROM public.users WHERE id = $1', [userId]);
+    const userResult = await client.query('SELECT mfa_secret, email, id FROM public.users WHERE id = $1', [userId]);
 
     if (userResult.rows.length === 0) {
       return { statusCode: 404, body: JSON.stringify({ error: 'User not found' }) };
@@ -185,11 +177,25 @@ exports.handler = async (event, context) => {
       console.warn('[MFA Verify] Redis reset failed (non-fatal):', redisErr.message);
     }
 
+    // 10.5 Upgrade the session token: the user just proved TOTP possession,
+    // so the new JWT carries mfaVerified: true (mirrors verify-mfa.js).
+    // Without this, save-secure-data's requireMFAIfEnrolled gate 403s on the
+    // pre-MFA token until the user logs out/in again.
+    const SESSION_DURATION = 86400;
+    const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
+    const newToken = jwt.sign(
+      { userId: user.id, email: user.email, mfaVerified: true },
+      process.env.JWT_SECRET,
+      { expiresIn: 86400 } // SESSION_DURATION (define at top: const SESSION_DURATION = 86400;)
+    );
+    const authCookie = `auth_token=${newToken}; HttpOnly; SameSite=${isProd ? 'None' : 'Lax'}; Path=/; Max-Age=86400${isProd ? '; Secure; Domain=.indoscient.in' : ''}`;
+
     // 11. Return Response — plaintext backup codes ONLY ONCE, never stored.
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
+        'Set-Cookie': [authCookie],
         'Cache-Control': 'no-store, no-cache, must-revalidate, private'
       },
       body: JSON.stringify({

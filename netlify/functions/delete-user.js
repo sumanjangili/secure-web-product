@@ -1,5 +1,5 @@
 // netlify/functions/delete-user.js
-const { Pool } = require('pg');
+const { pool } = require('./lib/db');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
@@ -32,14 +32,6 @@ function getAllowedOrigin(requestedOrigin) {
 
   return null;
 }
-
-// --- Database Initialization ---
-const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false
-});
 
 /**
  * Builds Set-Cookie strings that DELETE cookies with attributes matching

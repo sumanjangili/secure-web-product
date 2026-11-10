@@ -1,6 +1,6 @@
 // netlify/functions/mfa-setup-init.js
+const { pool } = require('./lib/db');
 const { generateSecret } = require('otplib');
-const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { validateCsrf } = require('./_middleware/csrf-check');
@@ -34,14 +34,6 @@ function getAllowedOrigin(requestedOrigin) {
 
   return null;
 }
-
-// Initialize Pool with SSL for Neon/Cloud Postgres
-const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false
-});
 
 exports.handler = async (event, context) => {
   // 1. CORS Preflight

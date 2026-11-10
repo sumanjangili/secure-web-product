@@ -1,5 +1,5 @@
 // netlify/functions/audit_log.js
-const { Pool } = require('pg');
+const { pool } = require('./lib/db');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 const { requireMFA } = require('./_middleware/require-mfa');
@@ -10,7 +10,7 @@ const jwtSecret = process.env.JWT_SECRET;
 const MAX_REQUESTS_PER_MINUTE = 30;
 const RATE_LIMIT_WINDOW = 60; // 1 minute in seconds
 
-// ✅ FIX: UUID format for the admin user-id filter. Previously
+// FIX: UUID format for the admin user-id filter. Previously
 // parseInt(uuid) → NaN → EVERY valid filter was rejected with 400,
 // so admins could never actually filter by user.
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -39,14 +39,6 @@ function getAllowedOrigin(requestedOrigin) {
 
   return null;
 }
-
-// --- Database Initialization ---
-const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false
-});
 
 // --- Admin User Configuration ---
 const ADMIN_USER_IDS = (() => {

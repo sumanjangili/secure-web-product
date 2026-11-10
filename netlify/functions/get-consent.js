@@ -1,5 +1,5 @@
 // netlify/functions/get-consent.js
-const { Pool } = require('pg');
+const { pool } = require('./lib/db');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
 
@@ -32,17 +32,6 @@ function getAllowedOrigin(requestedOrigin) {
   }
 
   return null;
-}
-
-const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false
-});
-
-if (!dbUrl) {
-  console.error('FATAL: DATABASE_URL environment variable is missing.');
 }
 
 exports.handler = async (event) => {

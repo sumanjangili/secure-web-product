@@ -1,6 +1,6 @@
 // netlify/functions/verify-mfa.js
+const { pool } = require('./lib/db');
 const { verify } = require('otplib');
-const { Pool } = require('pg');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const redis = require('./lib/redis');
@@ -40,14 +40,6 @@ function getAllowedOrigin(requestedOrigin) {
   
   return null;
 }
-
-// --- Database Initialization ---
-const pool = new Pool({ 
-  connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production' 
-    ? { rejectUnauthorized: false }
-    : false
-});
 
 /**
  * Logs audit events with GUARANTEED constraint compliance.

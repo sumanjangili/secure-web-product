@@ -1,5 +1,5 @@
 // netlify/functions/generate-backup-codes.js
-const { Pool } = require('pg');
+const { pool } = require('./lib/db');
 const argon2 = require('argon2');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
@@ -37,14 +37,6 @@ function getAllowedOrigin(requestedOrigin) {
 
   return null;
 }
-
-// --- Database Initialization ---
-const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: process.env.NODE_ENV === 'production'
-    ? { rejectUnauthorized: false }
-    : false
-});
 
 /**
  * Logs audit events with GUARANTEED constraint compliance.

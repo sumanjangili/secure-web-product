@@ -1,5 +1,5 @@
 // netlify/functions/login.js
-const { Pool } = require('pg');
+const { pool } = require('./lib/db');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -45,23 +45,6 @@ function getAllowedOrigin(requestedOrigin) {
   return null;
 }
 
-// --- Database Initialization ---
-let pool;
-if (dbUrl) {
-  try {
-    const isProdEnv = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
-    console.log(`[Login] Initializing DB. IsProd: ${isProdEnv}`);
-    pool = new Pool({
-      connectionString: dbUrl,
-      ssl: isProdEnv ? { rejectUnauthorized: false } : false
-    });
-    console.log('[Login] Database pool initialized.');
-  } catch (err) {
-    console.error('[Login] Failed to init DB:', err.message);
-    pool = null;
-  }
-}
-
 /**
  * Logs audit events with GUARANTEED constraint compliance.
  */
@@ -99,7 +82,7 @@ function jsonResponse(statusCode, data, extraHeaders = {}) {
 }
 
 /**
- * ✅ FIXED: Single source of truth for cookie construction.
+ * FIXED: Single source of truth for cookie construction.
  * Every cookie built through this helper carries IDENTICAL attributes,
  * which guarantees logout.js deletion cookies match exactly.
  *
@@ -309,12 +292,12 @@ async function executeHandler(event, context) {
       console.error('[Login] Update Last Login FAILED (Ignored):', updateErr.message);
     }
 
-    // 13. Prepare Cookies — ✅ FIXED: via buildCookie helper,
+    // 13. Prepare Cookies — FIXED: via buildCookie helper,
     // guaranteeing attribute parity with logout.js deletion cookies.
     const isProd = process.env.NODE_ENV === 'production' || !!process.env.NETLIFY;
 
     const authCookie = buildCookie('auth_token', token, SESSION_DURATION, isProd);
-    // ✅ Note: csrf_token must NOT be HttpOnly — the frontend reads it via
+    // Note: csrf_token must NOT be HttpOnly — the frontend reads it via
     // document.cookie to send the X-CSRF-Token header (Double-Submit pattern).
     const csrfAttrs = [
       `csrf_token=${csrfToken}`,
@@ -334,7 +317,9 @@ async function executeHandler(event, context) {
       mfaEnabled: user.mfa_enabled || false,
       message: user.mfa_enabled ? 'MFA required' : 'Login successful'
     }, {
-      'Set-Cookie': `${authCookie}, ${csrfCookie}`,
+      // Array → two separate Set-Cookie headers. Netlify Functions
+      // supports array values for multi-Set-Cookie responses.
+      'Set-Cookie': [authCookie, csrfCookie],
       'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
