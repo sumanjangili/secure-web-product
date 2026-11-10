@@ -191,11 +191,10 @@ exports.handler = async (event, context) => {
     const authCookie = `auth_token=${newToken}; HttpOnly; SameSite=${isProd ? 'None' : 'Lax'}; Path=/; Max-Age=86400${isProd ? '; Secure; Domain=.indoscient.in' : ''}`;
 
     // 11. Return Response — plaintext backup codes ONLY ONCE, never stored.
-    return {
+    const response = {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Set-Cookie': [authCookie],
         'Cache-Control': 'no-store, no-cache, must-revalidate, private'
       },
       body: JSON.stringify({
@@ -204,6 +203,8 @@ exports.handler = async (event, context) => {
         message: 'MFA enabled successfully. Save these codes immediately. They will not be shown again.',
       }),
     };
+    response.multiValueHeaders = { 'Set-Cookie': [authCookie] };
+    return response;
 
   } catch (error) {
     console.error('[MFA Verify] Error:', error);

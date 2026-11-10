@@ -174,16 +174,17 @@ exports.handler = async (event, context) => {
     if (userResult.rows.length === 0) {
       // User vanished between cookie verify and now. Return success to avoid
       // revealing whether the account existed.
-      return jsonResponse(200, {
+      const response = jsonResponse(200, {
         success: true,
         message: 'Account and associated data have been permanently erased (or did not exist).'
       }, {
-        'Set-Cookie': deletionCookies,
         'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
         'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'Vary': 'Origin'
       });
+      response.multiValueHeaders = { 'Set-Cookie': deletionCookies };
+      return response;
     }
 
     const user = userResult.rows[0];
@@ -239,31 +240,33 @@ exports.handler = async (event, context) => {
 
     if (deleteResult.rowCount === 0) {
       await client.query('ROLLBACK');
-      return jsonResponse(200, {
+      const response = jsonResponse(200, {
         success: true,
         message: 'Account and associated data have been permanently erased (or did not exist).'
       }, {
-        'Set-Cookie': deletionCookies,
         'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
         'Access-Control-Allow-Credentials': 'true',
         'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         'Vary': 'Origin'
       });
+      response.multiValueHeaders = { 'Set-Cookie': deletionCookies };
+      return response;
     }
 
     await client.query('COMMIT');
 
-    return jsonResponse(200, {
+    const response = jsonResponse(200, {
       success: true,
       message: 'Account and associated data have been permanently erased.'
     }, {
-      'Set-Cookie': deletionCookies,
       'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
       'Access-Control-Allow-Credentials': 'true',
       'Cache-Control': 'no-store, no-cache, must-revalidate, private',
       'X-Content-Type-Options': 'nosniff',
       'Vary': 'Origin'
     });
+    response.multiValueHeaders = { 'Set-Cookie': deletionCookies };
+    return response;
 
   } catch (error) {
     await client.query('ROLLBACK');

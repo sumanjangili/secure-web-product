@@ -311,15 +311,12 @@ async function executeHandler(event, context) {
 
     const allowedOrigin = getAllowedOrigin(event.headers.origin);
 
-    return jsonResponse(200, {
+    const response = jsonResponse(200, {
       success: true,
       userId: user.id,
       mfaEnabled: user.mfa_enabled || false,
       message: user.mfa_enabled ? 'MFA required' : 'Login successful'
     }, {
-      // Array → two separate Set-Cookie headers. Netlify Functions
-      // supports array values for multi-Set-Cookie responses.
-      'Set-Cookie': [authCookie, csrfCookie],
       'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -330,6 +327,11 @@ async function executeHandler(event, context) {
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff'
     });
+
+    // AWS Lambda proxy contract: arrays go in multiValueHeaders,
+    // not headers. Netlify dev accepts both; production only accepts this.
+    response.multiValueHeaders = { 'Set-Cookie': [authCookie, csrfCookie] };
+    return response; 
 
   } catch (error) {
     console.error('[Login] UNCAUGHT ERROR:', error.message, error.stack);

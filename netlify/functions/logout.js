@@ -123,15 +123,16 @@ exports.handler = async (event) => {
   // 5. Resolve origin
   const allowedOrigin = getAllowedOrigin(event.headers.origin);
 
-  return jsonResponse(200, {
+  const response = jsonResponse(200, {
     success: true,
     message: 'Logged out successfully',
   }, {
-    'Set-Cookie': deletions,
     'Access-Control-Allow-Origin': allowedOrigin || 'https://app.indoscient.in',
     'Access-Control-Allow-Credentials': 'true',
     'Cache-Control': 'no-store, no-cache, must-revalidate, private',
     'X-Content-Type-Options': 'nosniff',
     'Vary': 'Origin',
   });
+  response.multiValueHeaders = { 'Set-Cookie': deletions };
+  return response;
 };
