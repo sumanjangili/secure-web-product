@@ -13,8 +13,8 @@ This document tracks the verification steps for the current change set (**releas
 |---|------|--------|
 | 1 | Repo structure reviewed | - [x] *(reviewed 2026-11-09 — root/frontend/functions/workflows layout confirmed)* |
 | 2 | CI pipeline passes on a fresh branch | - [x] *(green run 42596127779 on main, 2026-11-09 — https://github.com/sumanjangili/secure-web-product/actions/runs/42596127779)* |
-| 3 | Lint, type-check, and tests all green | **auto** - [x] <!-- gate:lint-tests · passed 2026-11-09 13:02 UTC --> |
-| 4 | No vulnerable dependencies (audit gate, moderate) | **auto** - [x] <!-- gate:audit · passed 2026-11-09 13:02 UTC --> |
+| 3 | Lint, type-check, and tests all green | **auto** - [x] <!-- gate:lint-tests · passed 2026-11-10 14:33 UTC --> |
+| 4 | No vulnerable dependencies (audit gate, moderate) | **auto** - [x] <!-- gate:audit · passed 2026-11-10 14:33 UTC --> |
 | 5 | Secret scanning clean | - [x] *(Gitleaks clean in CI run 42596127779, 2026-11-09)* |
 | 6 | Docs up-to-date and include contribution steps | - [x] *(README updated with setup + contribution steps, 2026-11-09)* |
 | 7 | Production build succeeds and deploys to a staging URL | - [ ] |
