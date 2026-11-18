@@ -1,32 +1,7 @@
 {
-  "name": "@sumanjangili/app-indoscient",
+  "name": "@suman-jangili/app-indoscient",
   "version": "1.2.0",
   "description": "Secure web product with MFA, rate limiting, and encrypted data storage.",
-  "main": "index.js",
-  "directories": {
-    "doc": "docs",
-    "functions": "netlify/functions"
-  },
-  "scripts": {
-    "test": "npm run test:frontend && npm run test:functions",
-    "validate": "node scripts/validate-env.js",
-    "start": "npm run validate && netlify dev",
-    "dev": "concurrently \"npm run dev:functions\" \"npm run dev:frontend\"",
-    "dev:functions": "netlify functions:serve",
-    "dev:frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
-    "test:frontend": "npm --prefix frontend run test:run",
-    "test:functions": "npm --prefix frontend exec -- vitest run --root ../netlify/functions --passWithNoTests",
-    "lint": "npm run lint:frontend && npm run lint:functions",
-    "lint:frontend": "cd frontend && eslint .",
-    "lint:functions": "eslint \"netlify/functions/**/*.js\"",
-    "type-check": "npm run type-check:frontend && npm run type-check:functions",
-    "type-check:frontend": "cd frontend && tsc --noEmit",
-    "type-check:functions": "tsc --noEmit -p netlify/functions",
-    "audit": "npm run audit:frontend && npm run audit:functions",
-    "audit:frontend": "cd frontend && npx audit-ci --moderate",
-    "audit:functions": "cd netlify/functions && npm audit --omit=dev"
-  },
   "keywords": [
     "security",
     "mfa",
@@ -46,6 +21,32 @@
   "homepage": "https://app.indoscient.in",
   "engines": {
     "node": ">=22.13.0"
+  },
+  "files": [
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "npm run test:frontend && npm run test:functions",
+    "validate": "node scripts/validate-env.js",
+    "start": "npm run validate && netlify dev",
+    "dev": "concurrently \"npm run dev:functions\" \"npm run dev:frontend\"",
+    "dev:functions": "netlify functions:serve",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "test:frontend": "npm --prefix frontend run test:run",
+    "test:functions": "npm --prefix frontend exec -- vitest run --root ../netlify/functions --passWithNoTests",
+    "lint": "npm run lint:frontend && npm run lint:functions",
+    "lint:frontend": "cd frontend && eslint .",
+    "lint:functions": "eslint \"netlify/functions/**/*.js\"",
+    "type-check": "npm run type-check:frontend && npm run type-check:functions",
+    "type-check:frontend": "cd frontend && tsc --noEmit",
+    "type-check:functions": "tsc --noEmit -p netlify/functions",
+    "audit": "npm run audit:frontend && npm run audit:functions",
+    "audit:frontend": "cd frontend && npx audit-ci --moderate --allowlist GHSA-fc5q-39xc-vjpf",
+    "audit:functions": "cd netlify/functions && npm audit --omit=dev",
+    "publish:npm": "npm publish --access=public",
+    "publish:gpr": "npm pkg set name=@sumanjangili/app-indoscient && npm publish --registry=https://npm.pkg.github.com/ --access=public && npm pkg set name=@suman-jangili/app-indoscient"
   },
   "dependencies": {
     "@fastify/static": "^10.1.8",

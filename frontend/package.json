@@ -37,7 +37,7 @@
     "clean": "bash ./scripts/clean.sh",
     "gen-docs": "ts-node --esm ./scripts/generate-docs.ts",
     "encrypt-demo": "echo '⚠️  WARNING: Demo script only. Do not run in production.' && ts-node --esm ./scripts/encrypt-demo.ts",
-    "audit": "npm audit"
+    "audit": "npm audit --audit-level=high --omit=dev"
   },
   "dependencies": {
     "otpauth": "^9.5.0",

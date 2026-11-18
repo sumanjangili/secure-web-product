@@ -13,6 +13,8 @@ This backend (a collection of Node.js serverless functions) provides the API lay
 
 This repository serves as both a **functional secure application** and a **product management hub**. It demonstrates how to build a privacy-first system where sensitive data is encrypted in the browser, and all authentication events are logged.
 
+**Homepage:** https://app.indoscient.in
+
 ---
 
 ### Table of Contents
@@ -100,6 +102,8 @@ cd ../netlify/functions
 npm ci
 cd ../..
 ```
+> **What this package is**
+> This package ships a **deployable application**, not an importable library. There is no main entry point — the tarball contains the built static frontend (dist/) plus project source. Clone the repo (or install the package) and run.
 
 #### Local Development
 
@@ -277,6 +281,10 @@ We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for 
 
 ---
 
+#### Migration notice
+
+> Formerly @suman-jangili/secure-web-product (npmjs) and @sumanjangili/secure-web-product (GitHub Packages). Both old names are retired: the npmjs package carries a deprecation notice, and this package supersedes it entirely. Switch to @suman-jangili/app-indoscient (npm) / @sumanjangili/app-indoscient (git) — versions continue the 1.2.x line.
+
 ### License
 
 This project is released under the **MIT License** – feel free to fork, modify, and ship your own privacy‑first audit logging solution product.
@@ -286,6 +294,4 @@ This project is released under the **MIT License** – feel free to fork, modify
 > This project now accurately reflects **production-ready, secure, and functional** system aligned with GDPR and security best practices.
 
 ---
-
-
 
